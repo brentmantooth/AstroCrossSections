@@ -17,6 +17,11 @@ on the same graph for quick comparison.
 - Synchronized zoom and pan across both images
 - Optional auto-stretch display toggle (does not affect measurements)
 
+## Executible 
+
+Download the Windows 64-bit executable: [AstroCross.exe](dist/AstroCross.exe)
+
+
 ## Requirements
 
 - Python 3
