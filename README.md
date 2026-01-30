@@ -19,7 +19,7 @@ on the same graph for quick comparison.
 
 ## Executible 
 
-Download the Windows 64-bit executable: [AstroCross.exe](dist/AstroCross.exe)
+Download the Windows 64-bit executable: [AstroCross.exe](dist/AstroCross.exe) (right click and "save as")
 
 
 ## Requirements
