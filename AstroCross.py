@@ -63,6 +63,10 @@ def normalize_for_display(data: np.ndarray, stretch: bool = True) -> np.ndarray:
     return (scaled * 255).astype(np.uint8)
 
 
+def clamp_value(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
 def bilinear_sample(data: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
     h, w = data.shape
     xs = np.clip(xs, 0.0, w - 1.0)
@@ -105,6 +109,7 @@ class ImageState:
         self.data: np.ndarray | None = None
         self.display_image: ImageTk.PhotoImage | None = None
         self.scale: float = 1.0
+        self.base_scale: float = 1.0
         self.offset: tuple[int, int] = (0, 0)
         self.image_id: int | None = None
 
@@ -122,22 +127,45 @@ class ImageState:
             self.canvas.delete(self.image_id)
             self.image_id = None
 
-    def set_data(self, path: str, data: np.ndarray, stretch: bool = True) -> None:
+    def set_data(
+        self,
+        path: str,
+        data: np.ndarray,
+        stretch: bool = True,
+        zoom: float = 1.0,
+        center_norm: tuple[float, float] = (0.5, 0.5),
+    ) -> None:
         self.path = path
         self.data = data
-        self.redraw(stretch=stretch)
+        self.redraw(stretch=stretch, zoom=zoom, center_norm=center_norm)
 
-    def redraw(self, stretch: bool = True) -> None:
+    def redraw(
+        self,
+        stretch: bool = True,
+        zoom: float = 1.0,
+        center_norm: tuple[float, float] = (0.5, 0.5),
+    ) -> None:
         if self.data is None:
             return
         h, w = self.data.shape
         canvas_w = max(1, self.canvas.winfo_width())
         canvas_h = max(1, self.canvas.winfo_height())
-        scale = min(canvas_w / w, canvas_h / h)
+        base_scale = min(canvas_w / w, canvas_h / h)
+        scale = base_scale * zoom
+        self.base_scale = base_scale
         disp_w = max(1, int(w * scale))
         disp_h = max(1, int(h * scale))
-        x0 = (canvas_w - disp_w) // 2
-        y0 = (canvas_h - disp_h) // 2
+
+        if w > 1:
+            cx = clamp_value(center_norm[0], 0.0, 1.0) * (w - 1)
+        else:
+            cx = 0.0
+        if h > 1:
+            cy = clamp_value(center_norm[1], 0.0, 1.0) * (h - 1)
+        else:
+            cy = 0.0
+        x0 = int(round(canvas_w / 2 - cx * scale))
+        y0 = int(round(canvas_h / 2 - cy * scale))
         self.scale = scale
         self.offset = (x0, y0)
 
@@ -246,16 +274,23 @@ class AstroCrossApp:
         self.chk_logscale = ttk.Checkbutton(
             self.controls, text="Log scale plot", variable=self.logscale_var, command=self.update_plot_scale
         )
+        self.btn_reset_view = ttk.Button(self.controls, text="Reset View", command=self.reset_view)
         self.lbl_status = ttk.Label(self.controls, text="Click two points on Image 1 to sample a cross section.")
         self.btn_export.grid(row=0, column=0, sticky="w")
         self.btn_clear.grid(row=0, column=1, sticky="w", padx=(8, 0))
         self.chk_autostretch.grid(row=0, column=2, sticky="w", padx=(8, 0))
         self.chk_logscale.grid(row=0, column=3, sticky="w", padx=(8, 0))
-        self.lbl_status.grid(row=0, column=4, sticky="w", padx=(16, 0))
-        self.controls.columnconfigure(4, weight=1)
+        self.btn_reset_view.grid(row=0, column=4, sticky="w", padx=(8, 0))
+        self.lbl_status.grid(row=0, column=5, sticky="w", padx=(16, 0))
+        self.controls.columnconfigure(5, weight=1)
 
         self.image1 = ImageState(self.left_canvas, "Image 1")
         self.image2 = ImageState(self.right_canvas, "Image 2")
+
+        self.zoom = 1.0
+        self.center_norm = (0.5, 0.5)
+        self.pan_anchor: tuple[int, int, tuple[float, float]] | None = None
+        self.pan_source: ImageState | None = None
 
         self.selection_state = "idle"  # idle -> drawing -> fixed
         self.start_pt: tuple[float, float] | None = None
@@ -266,12 +301,16 @@ class AstroCrossApp:
 
         self.left_canvas.bind("<Button-1>", self.on_left_click)
         self.left_canvas.bind("<Motion>", self.on_left_move)
-        self.left_canvas.bind(
-            "<Configure>", lambda _evt: (self.image1.redraw(stretch=self.autostretch_var.get()), self.update_line_overlay())
-        )
-        self.right_canvas.bind(
-            "<Configure>", lambda _evt: (self.image2.redraw(stretch=self.autostretch_var.get()), self.update_line_overlay())
-        )
+        self.left_canvas.bind("<MouseWheel>", lambda event: self.on_zoom(event, self.image1))
+        self.right_canvas.bind("<MouseWheel>", lambda event: self.on_zoom(event, self.image2))
+        self.left_canvas.bind("<Button-3>", lambda event: self.on_pan_start(event, self.image1))
+        self.left_canvas.bind("<B3-Motion>", lambda event: self.on_pan_move(event, self.image1))
+        self.right_canvas.bind("<Button-3>", lambda event: self.on_pan_start(event, self.image2))
+        self.right_canvas.bind("<B3-Motion>", lambda event: self.on_pan_move(event, self.image2))
+        self.left_canvas.bind("<ButtonRelease-3>", self.on_pan_end)
+        self.right_canvas.bind("<ButtonRelease-3>", self.on_pan_end)
+        self.left_canvas.bind("<Configure>", lambda _evt: self.apply_view())
+        self.right_canvas.bind("<Configure>", lambda _evt: self.apply_view())
 
     def load_image(self, which: int) -> None:
         filetypes = [
@@ -287,14 +326,14 @@ class AstroCrossApp:
             messagebox.showerror("Load Error", f"Failed to load image:\n{exc}")
             return
         target = self.image1 if which == 1 else self.image2
-        target.set_data(path, data, stretch=self.autostretch_var.get())
+        target.set_data(path, data, stretch=self.autostretch_var.get(), zoom=self.zoom, center_norm=self.center_norm)
         label = os.path.basename(path)
         if which == 1:
             self.lbl_left.configure(text=label)
         else:
             self.lbl_right.configure(text=label)
         self.update_plot()
-        self.update_line_overlay()
+        self.apply_view()
 
     def read_image(self, path: str) -> np.ndarray:
         if is_fits_path(path):
@@ -445,11 +484,81 @@ class AstroCrossApp:
             "image2": prof2 if prof2 is not None else np.array([]),
         }
 
-    def update_display_mode(self) -> None:
+    def apply_view(self) -> None:
         stretch = self.autostretch_var.get()
-        self.image1.redraw(stretch=stretch)
-        self.image2.redraw(stretch=stretch)
+        self.image1.redraw(stretch=stretch, zoom=self.zoom, center_norm=self.center_norm)
+        self.image2.redraw(stretch=stretch, zoom=self.zoom, center_norm=self.center_norm)
         self.update_line_overlay()
+
+    def update_display_mode(self) -> None:
+        self.apply_view()
+
+    def reset_view(self) -> None:
+        self.zoom = 1.0
+        self.center_norm = (0.5, 0.5)
+        self.apply_view()
+
+    def on_zoom(self, event: tk.Event, image_state: ImageState) -> None:
+        if image_state.data is None:
+            return
+        pt = image_state.to_image_coords(event.x, event.y)
+        if pt is None:
+            return
+        if event.delta == 0:
+            return
+        factor = 1.1 if event.delta > 0 else 1 / 1.1
+        new_zoom = clamp_value(self.zoom * factor, 0.2, 10.0)
+        if new_zoom == self.zoom:
+            return
+        h, w = image_state.data.shape
+        if w < 2 or h < 2:
+            return
+        canvas_w = max(1, image_state.canvas.winfo_width())
+        canvas_h = max(1, image_state.canvas.winfo_height())
+        base_scale = min(canvas_w / w, canvas_h / h)
+        scale_new = base_scale * new_zoom
+        ix, iy = pt
+        cx = ix + (canvas_w / 2 - event.x) / scale_new
+        cy = iy + (canvas_h / 2 - event.y) / scale_new
+        cx = clamp_value(cx, 0.0, w - 1)
+        cy = clamp_value(cy, 0.0, h - 1)
+        self.zoom = new_zoom
+        self.center_norm = (cx / (w - 1), cy / (h - 1))
+        self.apply_view()
+
+    def on_pan_start(self, event: tk.Event, image_state: ImageState) -> None:
+        if image_state.data is None:
+            return
+        self.pan_anchor = (event.x, event.y, self.center_norm)
+        self.pan_source = image_state
+
+    def on_pan_move(self, event: tk.Event, image_state: ImageState) -> None:
+        if self.pan_anchor is None or self.pan_source is not image_state:
+            return
+        if image_state.data is None:
+            return
+        h, w = image_state.data.shape
+        if w < 2 or h < 2:
+            return
+        start_x, start_y, start_center = self.pan_anchor
+        dx = event.x - start_x
+        dy = event.y - start_y
+        canvas_w = max(1, image_state.canvas.winfo_width())
+        canvas_h = max(1, image_state.canvas.winfo_height())
+        base_scale = min(canvas_w / w, canvas_h / h)
+        scale = base_scale * self.zoom
+        cx0 = start_center[0] * (w - 1)
+        cy0 = start_center[1] * (h - 1)
+        cx = cx0 - dx / scale
+        cy = cy0 - dy / scale
+        cx = clamp_value(cx, 0.0, w - 1)
+        cy = clamp_value(cy, 0.0, h - 1)
+        self.center_norm = (cx / (w - 1), cy / (h - 1))
+        self.apply_view()
+
+    def on_pan_end(self, _event: tk.Event) -> None:
+        self.pan_anchor = None
+        self.pan_source = None
 
     def update_plot_scale(self) -> None:
         self.ax.set_yscale("log" if self.logscale_var.get() else "linear")
