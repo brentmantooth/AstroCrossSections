@@ -16,6 +16,16 @@ except Exception:  # pragma: no cover - optional dependency
     fits = None
 
 try:
+    from skimage.registration import phase_cross_correlation
+except Exception:  # pragma: no cover - optional dependency
+    phase_cross_correlation = None
+
+try:
+    import astroalign as aa
+except Exception:  # pragma: no cover - optional dependency
+    aa = None
+
+try:
     from PIL import Image, ImageTk
 except Exception as exc:  # pragma: no cover - required for GUI
     raise SystemExit("Pillow is required: pip install pillow") from exc
@@ -33,6 +43,7 @@ from matplotlib.figure import Figure
 
 COLOR_LUMINANCE = "luminance"
 COLOR_RGB = "rgb"
+REG_SHIFT_WARN = 1.5
 
 
 def is_fits_path(path: str) -> bool:
@@ -113,6 +124,7 @@ def normalize_for_display(data: np.ndarray, stretch: bool = True) -> np.ndarray:
         if hi <= lo:
             hi = lo + 1.0
     scaled = (data - lo) / (hi - lo)
+    scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
     scaled = np.clip(scaled, 0.0, 1.0)
     return (scaled * 255).astype(np.uint8)
 
@@ -157,6 +169,30 @@ def sample_line(data: np.ndarray, p0: tuple[float, float], p1: tuple[float, floa
         profile = np.stack(profiles, axis=1)
     dist = np.linspace(0.0, length, num)
     return dist, profile
+
+
+def center_crop(data: np.ndarray, new_h: int, new_w: int) -> np.ndarray:
+    h, w = image_hw(data)
+    if new_h > h or new_w > w:
+        raise ValueError("Crop size must be <= original size")
+    if new_h == h and new_w == w:
+        return data
+    y0 = max(0, (h - new_h) // 2)
+    x0 = max(0, (w - new_w) // 2)
+    if data.ndim == 2:
+        return data[y0 : y0 + new_h, x0 : x0 + new_w]
+    return data[y0 : y0 + new_h, x0 : x0 + new_w, ...]
+
+
+def crop_pair_to_common(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:
+    h1, w1 = image_hw(a)
+    h2, w2 = image_hw(b)
+    new_h = min(h1, h2)
+    new_w = min(w1, w2)
+    changed = (h1 != new_h or w1 != new_w or h2 != new_h or w2 != new_w)
+    if not changed:
+        return a, b, False
+    return center_crop(a, new_h, new_w), center_crop(b, new_h, new_w), True
 
 
 class ImageState:
@@ -331,6 +367,7 @@ class AstroCrossApp:
         self.btn_export = ttk.Button(self.controls, text="Export CSV", command=self.export_csv)
         self.btn_clear = ttk.Button(self.controls, text="Clear Selection", command=self.reset_selection)
         self.btn_clear_images = ttk.Button(self.controls, text="Clear Images", command=self.clear_images)
+        self.btn_register = ttk.Button(self.controls, text="Register Images", command=self.register_images)
         self.autostretch_var = tk.BooleanVar(value=True)
         self.chk_autostretch = ttk.Checkbutton(
             self.controls, text="Auto-stretch display", variable=self.autostretch_var, command=self.update_display_mode
@@ -340,15 +377,19 @@ class AstroCrossApp:
             self.controls, text="Log scale plot", variable=self.logscale_var, command=self.update_plot_scale
         )
         self.btn_reset_view = ttk.Button(self.controls, text="Reset View", command=self.reset_view)
-        self.lbl_status = ttk.Label(self.controls, text="Click two points on Image 1 to sample a cross section.")
+        self.status_base = "Click two points on Image 1 to sample a cross section."
+        self.registration_info = ""
+        self.lbl_status = ttk.Label(self.controls, text=self.status_base)
         self.btn_export.grid(row=0, column=0, sticky="w")
         self.btn_clear.grid(row=0, column=1, sticky="w", padx=(8, 0))
         self.btn_clear_images.grid(row=0, column=2, sticky="w", padx=(8, 0))
-        self.chk_autostretch.grid(row=0, column=3, sticky="w", padx=(8, 0))
-        self.chk_logscale.grid(row=0, column=4, sticky="w", padx=(8, 0))
-        self.btn_reset_view.grid(row=0, column=5, sticky="w", padx=(8, 0))
-        self.lbl_status.grid(row=0, column=6, sticky="w", padx=(16, 0))
-        self.controls.columnconfigure(6, weight=1)
+        self.btn_register.grid(row=0, column=3, sticky="w", padx=(8, 0))
+        self.btn_register.configure(state="disabled")
+        self.chk_autostretch.grid(row=0, column=4, sticky="w", padx=(8, 0))
+        self.chk_logscale.grid(row=0, column=5, sticky="w", padx=(8, 0))
+        self.btn_reset_view.grid(row=0, column=6, sticky="w", padx=(8, 0))
+        self.lbl_status.grid(row=0, column=7, sticky="w", padx=(16, 0))
+        self.controls.columnconfigure(7, weight=1)
 
         self.image1 = ImageState(self.left_canvas, "Image 1")
         self.image2 = ImageState(self.right_canvas, "Image 2")
@@ -378,6 +419,27 @@ class AstroCrossApp:
         self.right_canvas.bind("<ButtonRelease-3>", self.on_pan_end)
         self.left_canvas.bind("<Configure>", lambda _evt: self.apply_view())
         self.right_canvas.bind("<Configure>", lambda _evt: self.apply_view())
+
+    def update_status_label(self) -> None:
+        if self.registration_info:
+            text = f"{self.status_base} | {self.registration_info}"
+        else:
+            text = self.status_base
+        self.lbl_status.configure(text=text)
+
+    def set_status(self, text: str) -> None:
+        self.status_base = text
+        self.update_status_label()
+
+    def set_registration_info(self, text: str) -> None:
+        self.registration_info = text
+        self.update_status_label()
+
+    def update_register_button_state(self) -> None:
+        if not hasattr(self, "btn_register"):
+            return
+        can_register = self.image1.data is not None and self.image2.data is not None and aa is not None
+        self.btn_register.configure(state="normal" if can_register else "disabled")
 
     def configure_plot_axes(self, mode: str) -> None:
         if mode == self.plot_mode and self.axes:
@@ -478,6 +540,71 @@ class AstroCrossApp:
         data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
         return data
 
+    def registration_view(self, data: np.ndarray) -> np.ndarray:
+        if data.ndim == 3:
+            return rgb_to_luminance(data[..., :3])
+        return data
+
+    def prepare_registration_arrays(self) -> tuple[np.ndarray, np.ndarray] | None:
+        if self.image1.data is None or self.image2.data is None:
+            return None
+        ref = self.registration_view(self.image1.data).astype(np.float32, copy=False)
+        mov = self.registration_view(self.image2.data).astype(np.float32, copy=False)
+        ref = np.nan_to_num(ref, nan=0.0, posinf=0.0, neginf=0.0)
+        mov = np.nan_to_num(mov, nan=0.0, posinf=0.0, neginf=0.0)
+        ref, mov, _changed = crop_pair_to_common(ref, mov)
+        return ref, mov
+
+    def crop_images_to_common(self) -> bool:
+        if self.image1.data is None or self.image2.data is None:
+            return False
+        data1, data2, changed = crop_pair_to_common(self.image1.data, self.image2.data)
+        if not changed:
+            return False
+        self.image1.data = data1
+        self.image2.data = data2
+        return True
+
+    def registration_needs_warning(self, dx: float, dy: float, error: float) -> bool:
+        return abs(dx) > REG_SHIFT_WARN or abs(dy) > REG_SHIFT_WARN
+
+    def check_registration(self, warn: bool = False) -> None:
+        if self.image1.data is None or self.image2.data is None:
+            self.set_registration_info("")
+            return
+        if phase_cross_correlation is None:
+            self.set_registration_info("Registration check unavailable (install scikit-image)")
+            return
+        prepared = self.prepare_registration_arrays()
+        if prepared is None:
+            self.set_registration_info("")
+            return
+        ref, mov = prepared
+        try:
+            shift, error, _phasediff = phase_cross_correlation(ref, mov, upsample_factor=50)
+        except Exception as exc:
+            self.set_registration_info(f"Registration check failed: {exc}")
+            return
+        dy, dx = shift
+        self.set_registration_info(f"Reg shift dx={dx:.2f}, dy={dy:.2f}, err={error:.3f}")
+        if warn and self.registration_needs_warning(dx, dy, error):
+            messagebox.showwarning(
+                "Registration Check",
+                "Potential registration issues detected.\nConsider using the Register Images button.",
+            )
+
+    def sync_image_pair(self, warn_on_misalignment: bool = False) -> None:
+        if self.image1.data is None or self.image2.data is None:
+            self.set_registration_info("")
+            self.update_register_button_state()
+            return
+        cropped = self.crop_images_to_common()
+        if cropped:
+            self.reset_selection()
+            self.apply_view()
+        self.update_register_button_state()
+        self.check_registration(warn=warn_on_misalignment)
+
     def reload_image2_for_mode(self) -> None:
         if self.image2.path is None or self.color_mode is None:
             return
@@ -529,8 +656,61 @@ class AstroCrossApp:
             self.reload_image2_for_mode()
         else:
             self.lbl_right.configure(text=label)
+        self.sync_image_pair(warn_on_misalignment=(which == 2))
         self.update_plot()
         self.apply_view()
+
+    def _apply_transform(self, transform, source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+        try:
+            result = aa.apply_transform(transform, source, target, fill_value=np.nan)
+        except TypeError:
+            result = aa.apply_transform(transform, source, target)
+        if isinstance(result, tuple):
+            return result[0], result[1]
+        return result, None
+
+    def register_images(self) -> None:
+        if self.image1.data is None or self.image2.data is None:
+            messagebox.showinfo("Register Images", "Load both images before registering.")
+            return
+        if aa is None:
+            messagebox.showerror("Register Images", "astroalign is required (pip install astroalign).")
+            return
+        try:
+            cropped = self.crop_images_to_common()
+            if cropped:
+                self.reset_selection()
+            ref = self.registration_view(self.image1.data).astype(np.float32, copy=False)
+            mov = self.registration_view(self.image2.data).astype(np.float32, copy=False)
+            ref = np.nan_to_num(ref, nan=0.0, posinf=0.0, neginf=0.0)
+            mov = np.nan_to_num(mov, nan=0.0, posinf=0.0, neginf=0.0)
+            if hasattr(aa, "find_transform") and hasattr(aa, "apply_transform"):
+                transform, _matched = aa.find_transform(mov, ref)
+                if self.image2.data.ndim == 2:
+                    aligned, _foot = self._apply_transform(transform, mov, ref)
+                    aligned_data = aligned
+                else:
+                    aligned_channels = []
+                    for idx in range(3):
+                        aligned_ch, _foot = self._apply_transform(transform, self.image2.data[..., idx], ref)
+                        aligned_channels.append(aligned_ch)
+                    aligned_data = np.stack(aligned_channels, axis=2)
+            else:
+                if self.image2.data.ndim == 2:
+                    aligned_data, _foot = aa.register(mov, ref)
+                else:
+                    aligned_channels = []
+                    for idx in range(3):
+                        target_ch = self.image1.data[..., idx] if self.image1.data.ndim == 3 else ref
+                        aligned_ch, _foot = aa.register(self.image2.data[..., idx], target_ch)
+                        aligned_channels.append(aligned_ch)
+                    aligned_data = np.stack(aligned_channels, axis=2)
+            self.image2.data = aligned_data.astype(np.float32, copy=False)
+            self.apply_view()
+            self.update_plot()
+            self.check_registration(warn=True)
+        except Exception as exc:
+            messagebox.showerror("Register Images", f"Registration failed:\n{exc}")
 
     def on_left_click(self, event: tk.Event) -> None:
         pt = self.image1.to_image_coords(event.x, event.y)
@@ -542,13 +722,13 @@ class AstroCrossApp:
             self.start_pt = pt
             self.end_pt = pt
             self.selection_state = "drawing"
-            self.lbl_status.configure(text="Move mouse to adjust line, click second point to fix.")
+            self.set_status("Move mouse to adjust line, click second point to fix.")
             self.update_line_overlay()
             self.update_plot()
         elif self.selection_state == "drawing":
             self.end_pt = pt
             self.selection_state = "fixed"
-            self.lbl_status.configure(text="Cross section locked. Click again to start a new one.")
+            self.set_status("Cross section locked. Click again to start a new one.")
             self.update_line_overlay()
             self.update_plot()
 
@@ -764,7 +944,7 @@ class AstroCrossApp:
             self.line_id_right = None
         self.clear_plot_lines()
         self.canvas_plot.draw_idle()
-        self.lbl_status.configure(text="Click two points on Image 1 to sample a cross section.")
+        self.set_status("Click two points on Image 1 to sample a cross section.")
 
     def clear_images(self) -> None:
         self.image1.clear()
@@ -775,6 +955,8 @@ class AstroCrossApp:
         self.configure_plot_axes(COLOR_LUMINANCE)
         self.reset_selection()
         self.btn_load_right.configure(state="disabled")
+        self.set_registration_info("")
+        self.update_register_button_state()
 
     def export_csv(self) -> None:
         if not self.last_profile or self.last_profile["distance"].size == 0:
