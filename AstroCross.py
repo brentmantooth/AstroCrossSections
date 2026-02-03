@@ -44,6 +44,10 @@ from matplotlib.figure import Figure
 COLOR_LUMINANCE = "luminance"
 COLOR_RGB = "rgb"
 REG_SHIFT_WARN = 1.5
+AXIS_LABEL_SIZE = 12
+AXIS_TICK_SIZE = 10
+AXIS_TITLE_SIZE = 13
+LEGEND_FONT_SIZE = 9
 
 
 def is_fits_path(path: str) -> bool:
@@ -109,23 +113,83 @@ def data_kind_from_array(data: np.ndarray) -> str:
     return "float"
 
 
+def normalize_unit_interval(data: np.ndarray) -> np.ndarray:
+    data = np.asarray(data)
+    dtype = data.dtype
+    data = data.astype(np.float32, copy=False)
+    finite = data[np.isfinite(data)]
+    if finite.size == 0:
+        return np.zeros_like(data, dtype=np.float32)
+    min_val = float(np.min(finite))
+    max_val = float(np.max(finite))
+    if min_val >= 0.0 and max_val <= 1.0:
+        return data
+    if np.issubdtype(dtype, np.integer):
+        info = np.iinfo(dtype)
+        scale = float(info.max) if info.max > 0 else None
+        if scale:
+            return data / scale
+    if not np.isfinite(min_val) or not np.isfinite(max_val) or max_val <= min_val:
+        return np.zeros_like(data, dtype=np.float32)
+    return (data - min_val) / (max_val - min_val)
+
+
+def mtf(x: np.ndarray | float, m: float) -> np.ndarray:
+    x = np.asarray(x, dtype=np.float32)
+    m = float(np.clip(m, 1e-6, 1.0 - 1e-6))
+    y = np.zeros_like(x)
+    mask = (x > 0.0) & (x < 1.0)
+    if np.any(mask):
+        num = (m - 1.0) * x[mask]
+        den = (2.0 * m - 1.0) * x[mask] - m
+        y[mask] = np.divide(num, den, out=np.zeros_like(num), where=den != 0)
+    y = np.where(x >= 1.0, 1.0, y)
+    return np.clip(y, 0.0, 1.0)
+
+
+def stf_stretch(data: np.ndarray, shadow_clip: float = -2.8, target_bkg: float = 0.2) -> np.ndarray:
+    norm = normalize_unit_interval(data)
+    finite = norm[np.isfinite(norm)]
+    if finite.size == 0:
+        return np.zeros_like(norm, dtype=np.float32)
+    med = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - med)))
+    c = med + shadow_clip * 1.4826 * mad
+    c = float(np.clip(c, 0.0, 1.0))
+    if not np.isfinite(c):
+        return np.zeros_like(norm, dtype=np.float32)
+    if c >= 1.0:
+        c = 1.0 - 1e-6
+    denom = 1.0 - c
+    if denom <= 0.0:
+        return np.zeros_like(norm, dtype=np.float32)
+    scaled = (norm - c) / denom
+    scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
+    scaled = np.clip(scaled, 0.0, 1.0)
+    med_c = float(np.clip(med - c, 0.0, 1.0))
+    midtones = float(mtf(med_c, target_bkg))
+    if not np.isfinite(midtones) or midtones <= 0.0 or midtones >= 1.0:
+        return scaled
+    return mtf(scaled, midtones)
+
+
 def normalize_for_display(data: np.ndarray, stretch: bool = True) -> np.ndarray:
     finite = data[np.isfinite(data)]
     if finite.size == 0:
         return np.zeros_like(data, dtype=np.uint8)
     if stretch:
-        lo, hi = np.percentile(finite, (1, 99))
+        scaled = stf_stretch(data)
     else:
         lo = float(np.min(finite))
         hi = float(np.max(finite))
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        lo = float(np.min(finite))
-        hi = float(np.max(finite))
-        if hi <= lo:
-            hi = lo + 1.0
-    scaled = (data - lo) / (hi - lo)
-    scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
-    scaled = np.clip(scaled, 0.0, 1.0)
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            lo = float(np.min(finite))
+            hi = float(np.max(finite))
+            if hi <= lo:
+                hi = lo + 1.0
+        scaled = (data - lo) / (hi - lo)
+        scaled = np.nan_to_num(scaled, nan=0.0, posinf=1.0, neginf=0.0)
+        scaled = np.clip(scaled, 0.0, 1.0)
     return (scaled * 255).astype(np.uint8)
 
 
@@ -202,6 +266,7 @@ class ImageState:
         self.path: str | None = None
         self.data: np.ndarray | None = None
         self.data_kind: str | None = None
+        self.data_dtype: np.dtype | None = None
         self.display_image: ImageTk.PhotoImage | None = None
         self.scale: float = 1.0
         self.base_scale: float = 1.0
@@ -218,6 +283,7 @@ class ImageState:
         self.path = None
         self.data = None
         self.data_kind = None
+        self.data_dtype = None
         self.display_image = None
         if self.image_id is not None:
             self.canvas.delete(self.image_id)
@@ -394,6 +460,7 @@ class AstroCrossApp:
         self.image1 = ImageState(self.left_canvas, "Image 1")
         self.image2 = ImageState(self.right_canvas, "Image 2")
         self.color_mode: str | None = None
+        self.update_plot_title()
 
         self.zoom = 1.0
         self.center_norm = (0.5, 0.5)
@@ -453,25 +520,29 @@ class AstroCrossApp:
                 axes = [axes]
             channel_info = [("Red", "tab:red"), ("Green", "tab:green"), ("Blue", "tab:blue")]
             for ax, (label, color) in zip(axes, channel_info):
-                ax.set_ylabel(label)
+                ax.set_ylabel(label, fontsize=AXIS_LABEL_SIZE)
                 ax.grid(True, alpha=0.3)
+                ax.tick_params(labelsize=AXIS_TICK_SIZE)
                 line1, = ax.plot([], [], label="Image 1", color=color)
                 line2, = ax.plot([], [], label="Image 2", color=color, linestyle="--")
-                ax.legend(loc="upper right")
+                ax.legend(loc="upper right", fontsize=LEGEND_FONT_SIZE)
                 self.axes.append(ax)
                 self.lines.append((line1, line2))
-            axes[-1].set_xlabel("Distance (pixels)")
+            axes[-1].set_xlabel("Distance (pixels)", fontsize=AXIS_LABEL_SIZE)
         else:
             ax = self.fig.add_subplot(111)
-            ax.set_xlabel("Distance (pixels)")
-            ax.set_ylabel("Intensity")
+            ax.set_xlabel("Distance (pixels)", fontsize=AXIS_LABEL_SIZE)
+            ax.set_ylabel("Intensity", fontsize=AXIS_LABEL_SIZE)
             ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=AXIS_TICK_SIZE)
             line1, = ax.plot([], [], label="Image 1", color="tab:blue")
             line2, = ax.plot([], [], label="Image 2", color="tab:orange")
-            ax.legend()
+            ax.legend(fontsize=LEGEND_FONT_SIZE)
             self.axes = [ax]
             self.lines = [(line1, line2)]
         self.plot_mode = mode
+        if hasattr(self, "image1"):
+            self.update_plot_title()
         self.canvas_plot.draw_idle()
 
     def clear_plot_lines(self) -> None:
@@ -498,6 +569,40 @@ class AstroCrossApp:
         adjusted = profile + offset
         return np.maximum(adjusted, 1e-12)
 
+    def describe_dtype(self, image_state: ImageState) -> str:
+        dtype = image_state.data_dtype
+        if dtype is None:
+            return "unknown"
+        if dtype.kind in {"i", "u"}:
+            return f"{dtype.itemsize * 8}-bit int"
+        if dtype.kind == "f":
+            return f"{dtype.itemsize * 8}-bit float"
+        if dtype.kind == "b":
+            return "bool"
+        return dtype.name
+
+    def image_label(self, image_state: ImageState, fallback: str) -> str:
+        if image_state.path:
+            return os.path.basename(image_state.path)
+        return fallback
+
+    def update_plot_title(self) -> None:
+        if self.image1.data is None and self.image2.data is None:
+            title = "No image loaded"
+        elif self.image2.data is None:
+            title = f"Data type: {self.describe_dtype(self.image1)}"
+        elif self.image1.data is None:
+            title = f"Data type: {self.describe_dtype(self.image2)}"
+        else:
+            dtype1 = self.describe_dtype(self.image1)
+            dtype2 = self.describe_dtype(self.image2)
+            if dtype1 == dtype2:
+                title = f"Data type: {dtype1}"
+            else:
+                title = f"Data types: Image 1 {dtype1}, Image 2 {dtype2}"
+        self.fig.suptitle(title, fontsize=AXIS_TITLE_SIZE)
+        self.canvas_plot.draw_idle()
+
     def prompt_color_mode(self, is_rgb: bool) -> str:
         if not is_rgb:
             return COLOR_LUMINANCE
@@ -507,7 +612,7 @@ class AstroCrossApp:
         )
         return COLOR_LUMINANCE if convert else COLOR_RGB
 
-    def read_image_data(self, path: str) -> tuple[np.ndarray, bool, str]:
+    def read_image_data(self, path: str) -> tuple[np.ndarray, bool, str, np.dtype]:
         if is_fits_path(path):
             if fits is None:
                 raise RuntimeError("astropy is required to open FITS files (pip install astropy)")
@@ -516,19 +621,19 @@ class AstroCrossApp:
                 raise RuntimeError("FITS file has no data")
             data = normalize_image_array(np.asarray(data))
             is_rgb = data.ndim == 3 and data.shape[2] >= 3
-            return data, is_rgb, data_kind_from_array(data)
+            return data, is_rgb, data_kind_from_array(data), data.dtype
         if is_xisf_path(path):
             if XISF is None:
                 raise RuntimeError("xisf is required to open XISF files (pip install xisf)")
             data = normalize_image_array(np.asarray(XISF.read(path)))
             is_rgb = data.ndim == 3 and data.shape[2] >= 3
-            return data, is_rgb, data_kind_from_array(data)
+            return data, is_rgb, data_kind_from_array(data), data.dtype
         with Image.open(path) as img:
             bands = img.getbands()
             is_rgb = len(bands) >= 3
             img = img.convert("RGB")
             data = normalize_image_array(np.asarray(img))
-        return data, is_rgb, data_kind_from_array(data)
+        return data, is_rgb, data_kind_from_array(data), data.dtype
 
     def prepare_image_data(self, data: np.ndarray, mode: str) -> np.ndarray:
         data = apply_color_mode(data, mode)
@@ -609,13 +714,15 @@ class AstroCrossApp:
         if self.image2.path is None or self.color_mode is None:
             return
         try:
-            raw, _is_rgb, kind = self.read_image_data(self.image2.path)
+            raw, _is_rgb, kind, dtype = self.read_image_data(self.image2.path)
             data = self.prepare_image_data(raw, self.color_mode)
         except Exception as exc:
             messagebox.showerror("Load Error", f"Failed to reload Image 2:\n{exc}")
             return
         self.image2.set_data(self.image2.path, data, stretch=self.autostretch_var.get(), zoom=self.zoom, center_norm=self.center_norm)
         self.image2.data_kind = kind
+        self.image2.data_dtype = dtype
+        self.update_plot_title()
 
     def load_image(self, which: int) -> None:
         filetypes = [
@@ -626,7 +733,7 @@ class AstroCrossApp:
         if not path:
             return
         try:
-            raw, is_rgb, kind = self.read_image_data(path)
+            raw, is_rgb, kind, dtype = self.read_image_data(path)
         except Exception as exc:
             messagebox.showerror("Load Error", f"Failed to load image:\n{exc}")
             return
@@ -649,6 +756,7 @@ class AstroCrossApp:
         target = self.image1 if which == 1 else self.image2
         target.set_data(path, data, stretch=self.autostretch_var.get(), zoom=self.zoom, center_norm=self.center_norm)
         target.data_kind = kind
+        target.data_dtype = dtype
         label = os.path.basename(path)
         if which == 1:
             self.lbl_left.configure(text=label)
@@ -658,6 +766,7 @@ class AstroCrossApp:
             self.lbl_right.configure(text=label)
         self.sync_image_pair(warn_on_misalignment=(which == 2))
         self.update_plot()
+        self.update_plot_title()
         self.apply_view()
 
     def _apply_transform(self, transform, source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
@@ -798,6 +907,9 @@ class AstroCrossApp:
         if self.image1.data is None and self.image2.data is None:
             return
 
+        label1 = self.image_label(self.image1, "Image 1")
+        label2 = self.image_label(self.image2, "Image 2")
+
         dist = None
         prof1 = None
         prof2 = None
@@ -837,6 +949,11 @@ class AstroCrossApp:
                 ax.set_yscale("log" if self.logscale_var.get() else "linear")
                 ax.relim()
                 ax.autoscale_view()
+        legend_loc = "upper right" if self.plot_mode == COLOR_RGB else "best"
+        for ax, (line1, line2) in zip(self.axes, self.lines):
+            line1.set_label(label1)
+            line2.set_label(label2)
+            ax.legend(loc=legend_loc, fontsize=LEGEND_FONT_SIZE)
         self.canvas_plot.draw_idle()
         self.last_profile = {
             "distance": dist if dist is not None else np.array([]),
@@ -957,6 +1074,7 @@ class AstroCrossApp:
         self.btn_load_right.configure(state="disabled")
         self.set_registration_info("")
         self.update_register_button_state()
+        self.update_plot_title()
 
     def export_csv(self) -> None:
         if not self.last_profile or self.last_profile["distance"].size == 0:
@@ -973,6 +1091,8 @@ class AstroCrossApp:
         img1 = self.last_profile["image1"]
         img2 = self.last_profile["image2"]
         mode = self.last_profile.get("mode", self.plot_mode)
+        label1 = self.image_label(self.image1, "image1").replace(",", "_")
+        label2 = self.image_label(self.image2, "image2").replace(",", "_")
         if img1.size == 0 and img2.size == 0:
             messagebox.showinfo("Export CSV", "No cross section available yet.")
             return
@@ -990,23 +1110,23 @@ class AstroCrossApp:
             headers = ["distance"]
             if img1.size:
                 columns.extend([img1[:min_len, 0], img1[:min_len, 1], img1[:min_len, 2]])
-                headers.extend(["image1_r", "image1_g", "image1_b"])
+                headers.extend([f"{label1}_r", f"{label1}_g", f"{label1}_b"])
             if img2.size:
                 columns.extend([img2[:min_len, 0], img2[:min_len, 1], img2[:min_len, 2]])
-                headers.extend(["image2_r", "image2_g", "image2_b"])
+                headers.extend([f"{label2}_r", f"{label2}_g", f"{label2}_b"])
             data = np.column_stack(columns)
             header = ",".join(headers)
         else:
             if img2.size == 0:
                 data = np.column_stack([dist, img1])
-                header = "distance,image1"
+                header = f"distance,{label1}"
             elif img1.size == 0:
                 data = np.column_stack([dist, img2])
-                header = "distance,image2"
+                header = f"distance,{label2}"
             else:
                 min_len = min(dist.size, img1.size, img2.size)
                 data = np.column_stack([dist[:min_len], img1[:min_len], img2[:min_len]])
-                header = "distance,image1,image2"
+                header = f"distance,{label1},{label2}"
         np.savetxt(path, data, delimiter=",", header=header, comments="")
         messagebox.showinfo("Export CSV", f"Saved cross section to:\n{path}")
 
