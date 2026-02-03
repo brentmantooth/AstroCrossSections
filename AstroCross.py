@@ -1,7 +1,8 @@
 # AstroCross.py
 # Original author: Brent A. Mantooth
 # To run from python: & python AstroCross.py
-# to compile to exe: pyinstaller --onefile --windowed AstroCross.py
+# to compile to exe: pyinstaller AstroCross.spec
+
 
 import os
 import math
@@ -32,8 +33,10 @@ except Exception as exc:  # pragma: no cover - required for GUI
 
 try:
     from xisf import XISF
-except Exception:  # pragma: no cover - optional dependency
+    XISF_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - optional dependency
     XISF = None
+    XISF_IMPORT_ERROR = exc
 
 import matplotlib
 
@@ -624,6 +627,8 @@ class AstroCrossApp:
             return data, is_rgb, data_kind_from_array(data), data.dtype
         if is_xisf_path(path):
             if XISF is None:
+                if XISF_IMPORT_ERROR is not None:
+                    raise RuntimeError(f"xisf failed to import: {XISF_IMPORT_ERROR}")
                 raise RuntimeError("xisf is required to open XISF files (pip install xisf)")
             data = normalize_image_array(np.asarray(XISF.read(path)))
             is_rgb = data.ndim == 3 and data.shape[2] >= 3
