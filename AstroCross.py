@@ -51,6 +51,8 @@ AXIS_LABEL_SIZE = 12
 AXIS_TICK_SIZE = 10
 AXIS_TITLE_SIZE = 13
 LEGEND_FONT_SIZE = 9
+HIST_BINS = 256
+HIST_MIN_POS = 1e-6
 
 
 def is_fits_path(path: str) -> bool:
@@ -429,6 +431,8 @@ class AstroCrossApp:
         self.plot_mode: str | None = None
         self.axes: list = []
         self.lines: list = []
+        self.hist_median_lines: list[tuple] = []
+        self.hist_median_texts: list[tuple] = []
         self.configure_plot_axes(COLOR_LUMINANCE)
 
         self.controls = ttk.Frame(self.bottom)
@@ -445,6 +449,10 @@ class AstroCrossApp:
         self.chk_logscale = ttk.Checkbutton(
             self.controls, text="Log scale plot", variable=self.logscale_var, command=self.update_plot_scale
         )
+        self.histogram_var = tk.BooleanVar(value=False)
+        self.chk_histogram = ttk.Checkbutton(
+            self.controls, text="Histograms", variable=self.histogram_var, command=self.update_plot_mode
+        )
         self.btn_reset_view = ttk.Button(self.controls, text="Reset View", command=self.reset_view)
         self.status_base = "Click two points on Image 1 to sample a cross section."
         self.registration_info = ""
@@ -456,9 +464,10 @@ class AstroCrossApp:
         self.btn_register.configure(state="disabled")
         self.chk_autostretch.grid(row=0, column=4, sticky="w", padx=(8, 0))
         self.chk_logscale.grid(row=0, column=5, sticky="w", padx=(8, 0))
-        self.btn_reset_view.grid(row=0, column=6, sticky="w", padx=(8, 0))
-        self.lbl_status.grid(row=0, column=7, sticky="w", padx=(16, 0))
-        self.controls.columnconfigure(7, weight=1)
+        self.chk_histogram.grid(row=0, column=6, sticky="w", padx=(8, 0))
+        self.btn_reset_view.grid(row=0, column=7, sticky="w", padx=(8, 0))
+        self.lbl_status.grid(row=0, column=8, sticky="w", padx=(16, 0))
+        self.controls.columnconfigure(8, weight=1)
 
         self.image1 = ImageState(self.left_canvas, "Image 1")
         self.image2 = ImageState(self.right_canvas, "Image 2")
@@ -544,6 +553,7 @@ class AstroCrossApp:
             self.axes = [ax]
             self.lines = [(line1, line2)]
         self.plot_mode = mode
+        self.init_histogram_overlays()
         if hasattr(self, "image1"):
             self.update_plot_title()
         self.canvas_plot.draw_idle()
@@ -558,10 +568,14 @@ class AstroCrossApp:
             return 0.0
         if image_state.data_kind == "int":
             return 1.0
-        min_val = float(np.nanmin(image_state.data))
-        if not np.isfinite(min_val) or min_val <= 0:
+        finite = image_state.data[np.isfinite(image_state.data)]
+        positive = finite[finite > 0]
+        if positive.size == 0:
             return 1e-6
-        return 0.1 * min_val
+        min_pos = float(np.min(positive))
+        if not np.isfinite(min_pos):
+            return 1e-6
+        return 0.1 * min_pos
 
     def apply_log_offset(self, profile: np.ndarray | None, image_state: ImageState) -> np.ndarray | None:
         if profile is None:
@@ -571,6 +585,90 @@ class AstroCrossApp:
         offset = self.log_offset_for(image_state)
         adjusted = profile + offset
         return np.maximum(adjusted, 1e-12)
+
+    def histogram_edges(self, arrays: list[np.ndarray | None]) -> np.ndarray | None:
+        min_vals = []
+        max_vals = []
+        for arr in arrays:
+            if arr is None:
+                continue
+            finite = arr[np.isfinite(arr)]
+            finite = finite[finite > 0]
+            if finite.size == 0:
+                continue
+            min_vals.append(float(np.min(finite)))
+            max_vals.append(float(np.max(finite)))
+        if not min_vals:
+            return None
+        min_val = min(min_vals)
+        max_val = max(max_vals)
+        min_edge = max(min_val, HIST_MIN_POS)
+        max_edge = max(max_val, min_edge * 1.001)
+        if not np.isfinite(min_edge) or not np.isfinite(max_edge):
+            return None
+        return np.logspace(np.log10(min_edge), np.log10(max_edge), HIST_BINS + 1)
+
+    def histogram_counts(self, data: np.ndarray | None, edges: np.ndarray | None) -> np.ndarray:
+        if data is None or edges is None:
+            return np.zeros(HIST_BINS, dtype=np.float64)
+        finite = data[np.isfinite(data)]
+        finite = finite[finite > 0]
+        if finite.size == 0:
+            return np.zeros(edges.size - 1, dtype=np.float64)
+        counts, _edges = np.histogram(finite, bins=edges)
+        return counts.astype(np.float64)
+
+    def histogram_centers(self, edges: np.ndarray) -> np.ndarray:
+        return np.sqrt(edges[:-1] * edges[1:])
+
+    def median_positive(self, data: np.ndarray | None) -> float | None:
+        if data is None:
+            return None
+        finite = data[np.isfinite(data)]
+        finite = finite[finite > 0]
+        if finite.size == 0:
+            return None
+        median = float(np.median(finite))
+        if not np.isfinite(median):
+            return None
+        return median
+
+    def init_histogram_overlays(self) -> None:
+        self.hist_median_lines = []
+        self.hist_median_texts = []
+        for ax in self.axes:
+            line1 = ax.axvline(np.nan, color="tab:blue", linestyle=":", alpha=0.8, linewidth=1.2)
+            line2 = ax.axvline(np.nan, color="tab:orange", linestyle=":", alpha=0.8, linewidth=1.2)
+            text1 = ax.text(
+                0.98,
+                0.98,
+                "",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=AXIS_TICK_SIZE,
+                color="tab:blue",
+            )
+            text2 = ax.text(
+                0.98,
+                0.90,
+                "",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                fontsize=AXIS_TICK_SIZE,
+                color="tab:orange",
+            )
+            self.hist_median_lines.append((line1, line2))
+            self.hist_median_texts.append((text1, text2))
+
+    def set_histogram_overlays_visible(self, visible: bool) -> None:
+        for line1, line2 in self.hist_median_lines:
+            line1.set_visible(visible)
+            line2.set_visible(visible)
+        for text1, text2 in self.hist_median_texts:
+            text1.set_visible(visible)
+            text2.set_visible(visible)
 
     def describe_dtype(self, image_state: ImageState) -> str:
         dtype = image_state.data_dtype
@@ -605,6 +703,38 @@ class AstroCrossApp:
                 title = f"Data types: Image 1 {dtype1}, Image 2 {dtype2}"
         self.fig.suptitle(title, fontsize=AXIS_TITLE_SIZE)
         self.canvas_plot.draw_idle()
+
+    def apply_plot_labels(self, histogram: bool) -> None:
+        if histogram:
+            if self.plot_mode == COLOR_RGB:
+                channel_names = ["Red", "Green", "Blue"]
+                for ax, name in zip(self.axes, channel_names):
+                    ax.set_ylabel("Count", fontsize=AXIS_LABEL_SIZE)
+                    ax.set_title(name, fontsize=AXIS_TITLE_SIZE)
+                    ax.tick_params(labelsize=AXIS_TICK_SIZE)
+                if self.axes:
+                    self.axes[-1].set_xlabel("Intensity", fontsize=AXIS_LABEL_SIZE)
+            else:
+                ax = self.axes[0]
+                ax.set_xlabel("Intensity", fontsize=AXIS_LABEL_SIZE)
+                ax.set_ylabel("Count", fontsize=AXIS_LABEL_SIZE)
+                ax.set_title("")
+                ax.tick_params(labelsize=AXIS_TICK_SIZE)
+        else:
+            if self.plot_mode == COLOR_RGB:
+                channel_info = ["Red", "Green", "Blue"]
+                for ax, label in zip(self.axes, channel_info):
+                    ax.set_ylabel(label, fontsize=AXIS_LABEL_SIZE)
+                    ax.set_title("")
+                    ax.tick_params(labelsize=AXIS_TICK_SIZE)
+                if self.axes:
+                    self.axes[-1].set_xlabel("Distance (pixels)", fontsize=AXIS_LABEL_SIZE)
+            else:
+                ax = self.axes[0]
+                ax.set_xlabel("Distance (pixels)", fontsize=AXIS_LABEL_SIZE)
+                ax.set_ylabel("Intensity", fontsize=AXIS_LABEL_SIZE)
+                ax.set_title("")
+                ax.tick_params(labelsize=AXIS_TICK_SIZE)
 
     def prompt_color_mode(self, is_rgb: bool) -> str:
         if not is_rgb:
@@ -904,8 +1034,16 @@ class AstroCrossApp:
         return x * sx, y * sy
 
     def update_plot(self) -> None:
+        if self.histogram_var.get():
+            self.update_histogram_plot()
+            return
         if self.start_pt is None or self.end_pt is None:
             self.clear_plot_lines()
+            for ax in self.axes:
+                ax.set_xscale("linear")
+                ax.set_yscale("log" if self.logscale_var.get() else "linear")
+            self.apply_plot_labels(histogram=False)
+            self.set_histogram_overlays_visible(False)
             self.canvas_plot.draw_idle()
             self.last_profile = None
             return
@@ -951,13 +1089,16 @@ class AstroCrossApp:
 
         if dist is not None:
             for ax in self.axes:
+                ax.set_xscale("linear")
                 ax.set_yscale("log" if self.logscale_var.get() else "linear")
                 ax.relim()
                 ax.autoscale_view()
+        self.apply_plot_labels(histogram=False)
+        self.set_histogram_overlays_visible(False)
         legend_loc = "upper right" if self.plot_mode == COLOR_RGB else "best"
         for ax, (line1, line2) in zip(self.axes, self.lines):
-            line1.set_label(label1)
-            line2.set_label(label2)
+            line1.set_label(label1 if self.image1.data is not None else "_nolegend_")
+            line2.set_label(label2 if self.image2.data is not None else "_nolegend_")
             ax.legend(loc=legend_loc, fontsize=LEGEND_FONT_SIZE)
         self.canvas_plot.draw_idle()
         self.last_profile = {
@@ -966,6 +1107,102 @@ class AstroCrossApp:
             "image2": prof2 if prof2 is not None else np.array([]),
             "mode": self.plot_mode,
         }
+
+    def update_histogram_plot(self) -> None:
+        if self.image1.data is None and self.image2.data is None:
+            self.clear_plot_lines()
+            self.canvas_plot.draw_idle()
+            return
+
+        label1 = self.image_label(self.image1, "Image 1")
+        label2 = self.image_label(self.image2, "Image 2")
+        self.apply_plot_labels(histogram=True)
+
+        if self.plot_mode == COLOR_RGB:
+            channel_names = ["Red", "Green", "Blue"]
+            for idx, ax in enumerate(self.axes):
+                arr1 = self.image1.data[..., idx] if self.image1.data is not None else None
+                arr2 = self.image2.data[..., idx] if self.image2.data is not None else None
+                edges = self.histogram_edges([arr1, arr2])
+                if edges is None:
+                    self.lines[idx][0].set_data([], [])
+                    self.lines[idx][1].set_data([], [])
+                    continue
+                centers = self.histogram_centers(edges)
+                counts1 = self.histogram_counts(arr1, edges)
+                counts2 = self.histogram_counts(arr2, edges)
+                self.lines[idx][0].set_data(centers, counts1)
+                self.lines[idx][1].set_data(centers, counts2)
+                ax.set_xscale("log")
+                ax.set_title(channel_names[idx], fontsize=AXIS_TITLE_SIZE)
+                med1 = self.median_positive(arr1)
+                med2 = self.median_positive(arr2)
+                line1, line2 = self.hist_median_lines[idx]
+                text1, text2 = self.hist_median_texts[idx]
+                if med1 is None:
+                    line1.set_visible(False)
+                    text1.set_visible(False)
+                else:
+                    line1.set_visible(True)
+                    line1.set_xdata([med1, med1])
+                    text1.set_visible(True)
+                    text1.set_text(f"{label1}: {med1:.4g}")
+                if med2 is None:
+                    line2.set_visible(False)
+                    text2.set_visible(False)
+                else:
+                    line2.set_visible(True)
+                    line2.set_xdata([med2, med2])
+                    text2.set_visible(True)
+                    text2.set_text(f"{label2}: {med2:.4g}")
+        else:
+            arr1 = self.image1.data if self.image1.data is not None else None
+            arr2 = self.image2.data if self.image2.data is not None else None
+            edges = self.histogram_edges([arr1, arr2])
+            if edges is None:
+                self.lines[0][0].set_data([], [])
+                self.lines[0][1].set_data([], [])
+            else:
+                centers = self.histogram_centers(edges)
+                counts1 = self.histogram_counts(arr1, edges)
+                counts2 = self.histogram_counts(arr2, edges)
+                self.lines[0][0].set_data(centers, counts1)
+                self.lines[0][1].set_data(centers, counts2)
+            self.axes[0].set_xscale("log")
+            med1 = self.median_positive(arr1)
+            med2 = self.median_positive(arr2)
+            line1, line2 = self.hist_median_lines[0]
+            text1, text2 = self.hist_median_texts[0]
+            if med1 is None:
+                line1.set_visible(False)
+                text1.set_visible(False)
+            else:
+                line1.set_visible(True)
+                line1.set_xdata([med1, med1])
+                text1.set_visible(True)
+                text1.set_text(f"{label1}: {med1:.4g}")
+            if med2 is None:
+                line2.set_visible(False)
+                text2.set_visible(False)
+            else:
+                line2.set_visible(True)
+                line2.set_xdata([med2, med2])
+                text2.set_visible(True)
+                text2.set_text(f"{label2}: {med2:.4g}")
+
+        for ax in self.axes:
+            ax.set_yscale("log" if self.logscale_var.get() else "linear")
+            ax.relim()
+            ax.autoscale_view()
+
+        legend_loc = "upper right" if self.plot_mode == COLOR_RGB else "best"
+        for ax, (line1, line2) in zip(self.axes, self.lines):
+            line1.set_label(label1 if self.image1.data is not None else "_nolegend_")
+            line2.set_label(label2 if self.image2.data is not None else "_nolegend_")
+            ax.legend(loc=legend_loc, fontsize=LEGEND_FONT_SIZE)
+
+        self.canvas_plot.draw_idle()
+        self.last_profile = None
 
     def apply_view(self) -> None:
         stretch = self.autostretch_var.get()
@@ -1049,8 +1286,12 @@ class AstroCrossApp:
             ax.relim()
             ax.autoscale_view()
         if self.start_pt is None or self.end_pt is None:
-            self.canvas_plot.draw_idle()
-            return
+            if not self.histogram_var.get():
+                self.canvas_plot.draw_idle()
+                return
+        self.update_plot()
+
+    def update_plot_mode(self) -> None:
         self.update_plot()
 
     def reset_selection(self) -> None:
@@ -1082,6 +1323,9 @@ class AstroCrossApp:
         self.update_plot_title()
 
     def export_csv(self) -> None:
+        if self.histogram_var.get():
+            self.export_histogram_csv()
+            return
         if not self.last_profile or self.last_profile["distance"].size == 0:
             messagebox.showinfo("Export CSV", "No cross section available yet.")
             return
@@ -1134,6 +1378,71 @@ class AstroCrossApp:
                 header = f"distance,{label1},{label2}"
         np.savetxt(path, data, delimiter=",", header=header, comments="")
         messagebox.showinfo("Export CSV", f"Saved cross section to:\n{path}")
+
+    def export_histogram_csv(self) -> None:
+        if self.image1.data is None and self.image2.data is None:
+            messagebox.showinfo("Export CSV", "No images loaded.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        label1 = self.image_label(self.image1, "image1").replace(",", "_")
+        label2 = self.image_label(self.image2, "image2").replace(",", "_")
+
+        if self.plot_mode == COLOR_RGB:
+            columns = []
+            headers = []
+            channel_keys = ["r", "g", "b"]
+            for idx, key in enumerate(channel_keys):
+                arr1 = self.image1.data[..., idx] if self.image1.data is not None else None
+                arr2 = self.image2.data[..., idx] if self.image2.data is not None else None
+                edges = self.histogram_edges([arr1, arr2])
+                if edges is None:
+                    centers = np.zeros(HIST_BINS, dtype=np.float64)
+                    counts1 = np.zeros(HIST_BINS, dtype=np.float64)
+                    counts2 = np.zeros(HIST_BINS, dtype=np.float64)
+                else:
+                    centers = self.histogram_centers(edges)
+                    counts1 = self.histogram_counts(arr1, edges)
+                    counts2 = self.histogram_counts(arr2, edges)
+                columns.append(centers)
+                headers.append(f"{key}_bin_center")
+                if self.image1.data is not None:
+                    columns.append(counts1)
+                    headers.append(f"{label1}_{key}")
+                if self.image2.data is not None:
+                    columns.append(counts2)
+                    headers.append(f"{label2}_{key}")
+            data = np.column_stack(columns)
+            header = ",".join(headers)
+        else:
+            arr1 = self.image1.data if self.image1.data is not None else None
+            arr2 = self.image2.data if self.image2.data is not None else None
+            edges = self.histogram_edges([arr1, arr2])
+            if edges is None:
+                messagebox.showinfo("Export CSV", "No histogram data available.")
+                return
+            centers = self.histogram_centers(edges)
+            counts1 = self.histogram_counts(arr1, edges)
+            counts2 = self.histogram_counts(arr2, edges)
+            columns = [centers]
+            headers = ["bin_center"]
+            if self.image1.data is not None:
+                columns.append(counts1)
+                headers.append(label1)
+            if self.image2.data is not None:
+                columns.append(counts2)
+                headers.append(label2)
+            data = np.column_stack(columns)
+            header = ",".join(headers)
+
+        np.savetxt(path, data, delimiter=",", header=header, comments="")
+        messagebox.showinfo("Export CSV", f"Saved histogram to:\n{path}")
 
 
 def main() -> None:
