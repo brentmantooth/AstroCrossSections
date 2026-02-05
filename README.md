@@ -14,12 +14,15 @@ on the same graph for quick comparison.
 - Click two points on Image 1 to draw a line and sample both images
 - Live preview while moving the mouse before the second click
 - Plot both cross sections together (linear or log scale)
+- Optional histogram mode with log-spaced bins (combined Image 1 + Image 2)
 - Registration check when Image 2 loads (dx/dy/error shown in status bar)
 - One-click image registration (align Image 2 to Image 1)
 - Automatic center-cropping to a common size for pixel-accurate mapping
 - Export cross section data to CSV (supports RGB channels)
+- Export histogram data to CSV (supports RGB channels)
 - Synchronized zoom and pan across both images
 - Optional auto-stretch display toggle (does not affect measurements)
+- PixInsight-style STF auto-stretch for display
 - Clear images button to reset both panels
 
 ## Executable
@@ -68,6 +71,7 @@ python AstroCross.py
 - **Reset View**: return to fit-to-window view
 - **Auto-stretch display**: toggle between raw and stretched display
 - **Log scale plot**: toggle linear vs log y-axis
+- **Histograms**: switch plot to histograms (log-spaced bins; includes median markers)
 - **Register Images**: align Image 2 to Image 1 (requires `astroalign`)
 - **Clear Images**: clears both images and disables Image 2 until Image 1 is loaded
 
@@ -77,6 +81,7 @@ python AstroCross.py
 - When image sizes differ, both are center-cropped to a common size for 1:1 pixel mapping.
 - The status bar shows registration shift and error (requires `scikit-image`).
 - In RGB mode, plots and CSV export keep channels separate for both images.
+- Histogram mode ignores non-positive values (log-spaced bins) and shows per-image medians.
 
 ## License
 
