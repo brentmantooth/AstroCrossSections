@@ -4,6 +4,8 @@ AstroCrossSections is a small Tkinter desktop app for loading two images and ext
 cross sections. It supports common image formats and astronomical data, and plots both profiles
 on the same graph for quick comparison.
 
+See the YouTube video for a demo: https://youtu.be/OwB1C-wKpCU
+
 ![AstroCrossSections screenshot](AstroCrossScreen.png)
 
 ## Features
