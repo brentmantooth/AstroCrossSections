@@ -1,8 +1,7 @@
 # AstroCross.py
 # Original author: Brent A. Mantooth
 # To run from python: & python AstroCross.py
-# to compile to exe: pyinstaller AstroCross.spec
-
+# to compile to exe: pyinstaller --clean --noconfirm AstroCross.spec
 
 import os
 import math
