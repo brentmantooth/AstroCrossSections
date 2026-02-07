@@ -29,7 +29,7 @@ See the YouTube video for a demo: https://youtu.be/OwB1C-wKpCU
 
 ## Executable
 
-Download the Windows 64-bit executable: [AstroCross.exe](dist/AstroCross.exe) (right click and "save as")
+Download the Windows 64-bit package: [AstroCross-win64.zip](dist/AstroCross-win64.zip)
 
 
 ## Requirements
