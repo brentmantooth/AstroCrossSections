@@ -21,6 +21,8 @@ class CrossSectionViewer:
         self.distance: np.ndarray | None = None
         self.series_names: list[str] = []
         self.series_values: list[np.ndarray] = []
+        self.data_is_integer = False
+        self.table_decimals = 3
 
         self.bg_index_var = tk.IntVar(value=0)
         self.bg_width_var = tk.IntVar(value=5)
@@ -37,11 +39,17 @@ class CrossSectionViewer:
 
     def _build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=3)
-        self.root.rowconfigure(1, weight=0)
-        self.root.rowconfigure(2, weight=2)
+        self.root.rowconfigure(0, weight=1)
 
-        top_frame = ttk.Frame(self.root, padding=6)
+        self.main_pane = ttk.Panedwindow(self.root, orient="vertical")
+        self.main_pane.grid(row=0, column=0, sticky="nsew")
+
+        top_section = ttk.Frame(self.main_pane)
+        top_section.columnconfigure(0, weight=1)
+        top_section.rowconfigure(0, weight=1)
+        top_section.rowconfigure(1, weight=0)
+
+        top_frame = ttk.Frame(top_section, padding=6)
         top_frame.grid(row=0, column=0, sticky="nsew")
         top_frame.columnconfigure(0, weight=1)
         top_frame.rowconfigure(0, weight=1)
@@ -55,7 +63,7 @@ class CrossSectionViewer:
         self.top_canvas.draw()
         self.top_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        controls = ttk.Frame(self.root, padding=(6, 4))
+        controls = ttk.Frame(top_section, padding=(6, 4))
         controls.grid(row=1, column=0, sticky="ew")
         controls.columnconfigure(1, weight=1)
         controls.columnconfigure(2, weight=0)
@@ -81,6 +89,7 @@ class CrossSectionViewer:
             orient="horizontal",
             resolution=1,
             showvalue=0,
+            variable=self.bg_index_var,
             command=self._on_bg_slider,
         )
         self.bg_scale.grid(row=1, column=1, sticky="ew", pady=(6, 0))
@@ -107,6 +116,7 @@ class CrossSectionViewer:
             orient="horizontal",
             resolution=1,
             showvalue=0,
+            variable=self.bright_index_var,
             command=self._on_bright_slider,
         )
         self.bright_scale.grid(row=2, column=1, sticky="ew", pady=(4, 0))
@@ -127,33 +137,40 @@ class CrossSectionViewer:
         self.bg_width_var.trace_add("write", self._on_width_trace)
         self.bright_width_var.trace_add("write", self._on_width_trace)
 
-        bottom_frame = ttk.Frame(self.root, padding=6)
-        bottom_frame.grid(row=2, column=0, sticky="nsew")
-        bottom_frame.columnconfigure(0, weight=1)
-        bottom_frame.columnconfigure(1, weight=1)
-        bottom_frame.columnconfigure(2, weight=0)
-        bottom_frame.rowconfigure(0, weight=1)
+        bottom_section = ttk.Frame(self.main_pane)
+        bottom_section.columnconfigure(0, weight=1)
+        bottom_section.rowconfigure(0, weight=1)
+
+        self.bottom_pane = ttk.Panedwindow(bottom_section, orient="horizontal")
+        self.bottom_pane.grid(row=0, column=0, sticky="nsew")
+
+        bottom_plot_frame = ttk.Frame(self.bottom_pane)
+        bottom_plot_frame.columnconfigure(0, weight=1)
+        bottom_plot_frame.rowconfigure(0, weight=1)
 
         self.bottom_fig = Figure(figsize=(5.2, 2.5), dpi=100)
         self.bottom_ax = self.bottom_fig.add_subplot(111)
         self.bottom_ax.set_title("Background Subtracted")
         self.bottom_ax.set_xlabel("Distance (pixels)")
         self.bottom_ax.set_ylabel("Value - Background")
-        self.bottom_canvas = FigureCanvasTkAgg(self.bottom_fig, master=bottom_frame)
+        self.bottom_canvas = FigureCanvasTkAgg(self.bottom_fig, master=bottom_plot_frame)
         self.bottom_canvas.draw()
         self.bottom_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+
+        ratio_plot_frame = ttk.Frame(self.bottom_pane)
+        ratio_plot_frame.columnconfigure(0, weight=1)
+        ratio_plot_frame.rowconfigure(0, weight=1)
 
         self.ratio_fig = Figure(figsize=(5.2, 2.5), dpi=100)
         self.ratio_ax = self.ratio_fig.add_subplot(111)
         self.ratio_ax.set_title("Abs Ratio (BG Subtracted)")
         self.ratio_ax.set_xlabel("Distance (pixels)")
         self.ratio_ax.set_ylabel("Abs Ratio")
-        self.ratio_canvas = FigureCanvasTkAgg(self.ratio_fig, master=bottom_frame)
+        self.ratio_canvas = FigureCanvasTkAgg(self.ratio_fig, master=ratio_plot_frame)
         self.ratio_canvas.draw()
-        self.ratio_canvas.get_tk_widget().grid(row=0, column=1, sticky="nsew", padx=(0, 6))
+        self.ratio_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
-        table_frame = ttk.Frame(bottom_frame)
-        table_frame.grid(row=0, column=2, sticky="nsew")
+        table_frame = ttk.Frame(self.bottom_pane)
         table_frame.rowconfigure(1, weight=1)
         table_frame.columnconfigure(0, weight=1)
 
@@ -172,6 +189,14 @@ class CrossSectionViewer:
             xscrollcommand=table_scroll_x.set,
         )
 
+        self.bottom_pane.add(bottom_plot_frame, weight=3)
+        self.bottom_pane.add(ratio_plot_frame, weight=3)
+        self.bottom_pane.add(table_frame, weight=2)
+
+        self.main_pane.add(top_section, weight=3)
+        self.main_pane.add(bottom_section, weight=2)
+        self.root.after(100, self._set_pane_defaults)
+
     def _set_controls_state(self, state: str) -> None:
         for widget in (
             self.bg_scale,
@@ -182,6 +207,19 @@ class CrossSectionViewer:
             self.bright_value_label,
         ):
             widget.configure(state=state)
+
+    def _set_pane_defaults(self) -> None:
+        try:
+            self.root.update_idletasks()
+            total_width = self.bottom_pane.winfo_width()
+            if total_width > 0:
+                self.bottom_pane.sashpos(0, int(total_width * 0.45))
+                self.bottom_pane.sashpos(1, int(total_width * 0.75))
+            total_height = self.main_pane.winfo_height()
+            if total_height > 0:
+                self.main_pane.sashpos(0, int(total_height * 0.6))
+        except Exception:
+            pass
 
     def _on_bg_slider(self, value: str) -> None:
         if self.distance is None:
@@ -208,6 +246,31 @@ class CrossSectionViewer:
     def _on_log_toggle(self) -> None:
         self._refresh_plots()
 
+    def _set_default_indices(self) -> None:
+        if self.distance is None or not self.series_values:
+            self.bg_index_var.set(0)
+            self.bright_index_var.set(0)
+            return
+
+        values = np.vstack(self.series_values)
+        finite_mask = np.isfinite(values)
+        if not np.any(finite_mask):
+            self.bg_index_var.set(0)
+            self.bright_index_var.set(0)
+            return
+
+        safe_values = np.where(finite_mask, values, np.nan)
+        flat_min = int(np.nanargmin(safe_values))
+        flat_max = int(np.nanargmax(safe_values))
+
+        count = self.distance.size
+        bg_index = flat_min % count
+        bright_index = flat_max % count
+        self.bg_index_var.set(bg_index)
+        self.bright_index_var.set(bright_index)
+        self.bg_scale.set(bg_index)
+        self.bright_scale.set(bright_index)
+
     def load_csv(self) -> None:
         path = filedialog.askopenfilename(
             title="Open cross section CSV",
@@ -231,6 +294,7 @@ class CrossSectionViewer:
         self.series_values = values
         self.file_label_text.set(os.path.basename(path))
         self._configure_table()
+        self._compute_data_type()
 
         max_index = max(self.distance.size - 1, 0)
         for scale in (self.bg_scale, self.bright_scale):
@@ -243,9 +307,8 @@ class CrossSectionViewer:
         self.bg_width_var.set(min(self.bg_width_var.get(), max_width))
         self.bright_width_var.set(min(self.bright_width_var.get(), max_width))
 
-        self.bg_index_var.set(0)
-        self.bright_index_var.set(0)
         self._set_controls_state("normal")
+        self._set_default_indices()
         self._refresh_plots()
 
     def _read_cross_section_csv(
@@ -332,6 +395,21 @@ class CrossSectionViewer:
         for item in self.summary_table.get_children():
             self.summary_table.delete(item)
 
+    def _compute_data_type(self) -> None:
+        if self.distance is None or not self.series_values:
+            self.data_is_integer = False
+            self.table_decimals = 3
+            return
+        values = np.column_stack(self.series_values)
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            self.data_is_integer = False
+            self.table_decimals = 3
+            return
+        is_integer = np.all(np.isclose(finite, np.round(finite)))
+        self.data_is_integer = bool(is_integer)
+        self.table_decimals = 0 if self.data_is_integer else 6
+
     def _refresh_plots(self) -> None:
         if self.distance is None or not self.series_values:
             return
@@ -411,7 +489,13 @@ class CrossSectionViewer:
                 valid = np.isfinite(plot_values) & (plot_values > 0)
                 bottom_has_positive = bottom_has_positive or bool(np.any(valid))
                 plot_values = np.where(valid, plot_values, np.nan)
-            self.bottom_ax.plot(self.distance, plot_values, label=name, linewidth=1.2)
+            self.bottom_ax.plot(
+                self.distance,
+                plot_values,
+                label=name,
+                linewidth=1.2,
+                alpha=0.6,
+            )
         self.bottom_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
         self.bottom_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
         self.bottom_ax.set_title("Background Subtracted")
@@ -494,7 +578,9 @@ class CrossSectionViewer:
         def fmt(value: float) -> str:
             if value is None or not np.isfinite(value):
                 return "-"
-            return f"{value:.3f}"
+            if self.table_decimals <= 0:
+                return f"{value:.0f}"
+            return f"{value:.{self.table_decimals}f}"
 
         def ratio_mean(series: np.ndarray, start: int, end: int) -> float:
             if series.size == 0:
