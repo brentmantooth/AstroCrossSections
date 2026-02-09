@@ -437,6 +437,7 @@ class AstroCrossApp:
         self.controls = ttk.Frame(self.bottom)
         self.controls.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.btn_export = ttk.Button(self.controls, text="Export CSV", command=self.export_csv)
+        self.btn_analyze = ttk.Button(self.controls, text="Analyze", command=self.analyze_cross_section)
         self.btn_clear = ttk.Button(self.controls, text="Clear Selection", command=self.reset_selection)
         self.btn_clear_images = ttk.Button(self.controls, text="Clear Images", command=self.clear_images)
         self.btn_register = ttk.Button(self.controls, text="Register Images", command=self.register_images)
@@ -457,16 +458,17 @@ class AstroCrossApp:
         self.registration_info = ""
         self.lbl_status = ttk.Label(self.controls, text=self.status_base)
         self.btn_export.grid(row=0, column=0, sticky="w")
-        self.btn_clear.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        self.btn_clear_images.grid(row=0, column=2, sticky="w", padx=(8, 0))
-        self.btn_register.grid(row=0, column=3, sticky="w", padx=(8, 0))
+        self.btn_analyze.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.btn_clear.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        self.btn_clear_images.grid(row=0, column=3, sticky="w", padx=(8, 0))
+        self.btn_register.grid(row=0, column=4, sticky="w", padx=(8, 0))
         self.btn_register.configure(state="disabled")
-        self.chk_autostretch.grid(row=0, column=4, sticky="w", padx=(8, 0))
-        self.chk_logscale.grid(row=0, column=5, sticky="w", padx=(8, 0))
-        self.chk_histogram.grid(row=0, column=6, sticky="w", padx=(8, 0))
-        self.btn_reset_view.grid(row=0, column=7, sticky="w", padx=(8, 0))
-        self.lbl_status.grid(row=0, column=8, sticky="w", padx=(16, 0))
-        self.controls.columnconfigure(8, weight=1)
+        self.chk_autostretch.grid(row=0, column=5, sticky="w", padx=(8, 0))
+        self.chk_logscale.grid(row=0, column=6, sticky="w", padx=(8, 0))
+        self.chk_histogram.grid(row=0, column=7, sticky="w", padx=(8, 0))
+        self.btn_reset_view.grid(row=0, column=8, sticky="w", padx=(8, 0))
+        self.lbl_status.grid(row=0, column=9, sticky="w", padx=(16, 0))
+        self.controls.columnconfigure(9, weight=1)
 
         self.image1 = ImageState(self.left_canvas, "Image 1")
         self.image2 = ImageState(self.right_canvas, "Image 2")
@@ -1377,6 +1379,97 @@ class AstroCrossApp:
                 header = f"distance,{label1},{label2}"
         np.savetxt(path, data, delimiter=",", header=header, comments="")
         messagebox.showinfo("Export CSV", f"Saved cross section to:\n{path}")
+
+    def analyze_cross_section(self) -> None:
+        if self.histogram_var.get():
+            messagebox.showinfo("Analyze", "Disable Histograms to analyze cross sections.")
+            return
+        if not self.last_profile or self.last_profile["distance"].size == 0:
+            messagebox.showinfo("Analyze", "No cross section available yet.")
+            return
+
+        dist = self.last_profile["distance"]
+        img1 = self.last_profile["image1"]
+        img2 = self.last_profile["image2"]
+        mode = self.last_profile.get("mode", self.plot_mode)
+
+        channel_label = ""
+        if mode == COLOR_RGB:
+            selection = self.prompt_rgb_channel()
+            if selection is None:
+                return
+            channel_idx, channel_label = selection
+            if img1.size:
+                img1 = img1[:, channel_idx]
+            if img2.size:
+                img2 = img2[:, channel_idx]
+
+        label1 = self.image_label(self.image1, "image1").replace(",", "_")
+        label2 = self.image_label(self.image2, "image2").replace(",", "_")
+        if channel_label:
+            label1 = f"{label1} ({channel_label})"
+            label2 = f"{label2} ({channel_label})"
+
+        series_names: list[str] = []
+        series_values: list[np.ndarray] = []
+        if img1.size:
+            series_names.append(label1)
+            series_values.append(img1)
+        if img2.size:
+            series_names.append(label2)
+            series_values.append(img2)
+        if not series_values:
+            messagebox.showinfo("Analyze", "No cross section available yet.")
+            return
+
+        try:
+            import Analysis
+        except Exception as exc:  # pragma: no cover - import guard
+            messagebox.showerror("Analyze", f"Unable to open analysis window:\n{exc}")
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title("AstroCross Analysis")
+        viewer = Analysis.CrossSectionViewer(window, enable_csv=False)
+        viewer.load_data(dist, series_names, series_values, source_label="AstroCross selection")
+
+    def prompt_rgb_channel(self) -> tuple[int, str] | None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select RGB Channel")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        ttk.Label(dialog, text="Choose a channel to analyze:").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(12, 6)
+        )
+
+        selection_var = tk.StringVar(value="red")
+        options = [("Red", "red"), ("Green", "green"), ("Blue", "blue")]
+        for idx, (label, value) in enumerate(options, start=1):
+            ttk.Radiobutton(dialog, text=label, value=value, variable=selection_var).grid(
+                row=idx, column=0, columnspan=2, sticky="w", padx=12
+            )
+
+        result: dict[str, str | None] = {"value": None}
+
+        def on_ok() -> None:
+            result["value"] = selection_var.get()
+            dialog.destroy()
+
+        def on_cancel() -> None:
+            dialog.destroy()
+
+        ttk.Button(dialog, text="OK", command=on_ok).grid(row=4, column=0, padx=12, pady=12, sticky="e")
+        ttk.Button(dialog, text="Cancel", command=on_cancel).grid(row=4, column=1, padx=12, pady=12, sticky="w")
+
+        dialog.wait_window()
+
+        value = result["value"]
+        if value is None:
+            return None
+        mapping = {"red": (0, "Red"), "green": (1, "Green"), "blue": (2, "Blue")}
+        return mapping[value]
 
     def export_histogram_csv(self) -> None:
         if self.image1.data is None and self.image2.data is None:

@@ -15,10 +15,11 @@ from matplotlib.figure import Figure
 
 
 class CrossSectionViewer:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, enable_csv: bool = True) -> None:
         self.root = root
         self.root.title("Cross Section Analysis")
         self.root.geometry("1200x720")
+        self.enable_csv = enable_csv
 
         self.distance: np.ndarray | None = None
         self.series_names: list[str] = []
@@ -27,14 +28,15 @@ class CrossSectionViewer:
         self.table_decimals = 3
 
         self.bg_index_var = tk.IntVar(value=0)
-        self.bg_width_var = tk.IntVar(value=5)
+        self.bg_width_var = tk.IntVar(value=15)
         self.bright_index_var = tk.IntVar(value=0)
-        self.bright_width_var = tk.IntVar(value=5)
+        self.bright_width_var = tk.IntVar(value=15)
 
         self.bg_value_text = tk.StringVar(value="X: -")
         self.bright_value_text = tk.StringVar(value="X: -")
-        self.file_label_text = tk.StringVar(value="No CSV loaded")
+        self.file_label_text = tk.StringVar(value="No data loaded")
         self.y_log_var = tk.BooleanVar(value=False)
+        self.axis_log_override: dict[object, bool] = {}
 
         self._build_layout()
         self._set_controls_state("disabled")
@@ -71,17 +73,21 @@ class CrossSectionViewer:
         controls.columnconfigure(1, weight=1)
         controls.columnconfigure(2, weight=0)
 
-        load_button = ttk.Button(controls, text="Load CSV", command=self.load_csv)
-        load_button.grid(row=0, column=0, sticky="w")
+        col = 0
+        if self.enable_csv:
+            load_button = ttk.Button(controls, text="Load CSV", command=self.load_csv)
+            load_button.grid(row=0, column=col, sticky="w")
+            col += 1
         file_label = ttk.Label(controls, textvariable=self.file_label_text)
-        file_label.grid(row=0, column=1, sticky="w", padx=(8, 8))
+        file_label.grid(row=0, column=col, sticky="w", padx=(8, 8))
+        col += 1
         y_log_check = ttk.Checkbutton(
             controls,
             text="Y log scale",
             variable=self.y_log_var,
             command=self._on_log_toggle,
         )
-        y_log_check.grid(row=0, column=2, sticky="e")
+        y_log_check.grid(row=0, column=col, sticky="e")
 
         bg_label = ttk.Label(controls, text="Background")
         bg_label.grid(row=1, column=0, sticky="w", pady=(6, 0))
@@ -157,6 +163,7 @@ class CrossSectionViewer:
         bg_sub_frame.rowconfigure(0, weight=1)
 
         self.bottom_fig = Figure(figsize=(5.2, 2.5), dpi=100)
+        self.bottom_fig.subplots_adjust(left=0.2)
         self.bottom_ax = self.bottom_fig.add_subplot(111)
         self.bottom_ax.set_title("Background Subtracted")
         self.bottom_ax.set_xlabel("Distance (pixels)")
@@ -170,6 +177,7 @@ class CrossSectionViewer:
         ratio_frame.rowconfigure(0, weight=1)
 
         self.ratio_fig = Figure(figsize=(5.2, 2.5), dpi=100)
+        self.ratio_fig.subplots_adjust(left=0.2)
         self.ratio_ax = self.ratio_fig.add_subplot(111)
         self.ratio_ax.set_title("Abs Ratio (BG Subtracted)")
         self.ratio_ax.set_xlabel("Distance (pixels)")
@@ -183,6 +191,7 @@ class CrossSectionViewer:
         diff_orig_frame.rowconfigure(0, weight=1)
 
         self.diff_orig_fig = Figure(figsize=(5.2, 2.5), dpi=100)
+        self.diff_orig_fig.subplots_adjust(left=0.2)
         self.diff_orig_ax = self.diff_orig_fig.add_subplot(111)
         self.diff_orig_ax.set_title("Original Differences")
         self.diff_orig_ax.set_xlabel("Distance (pixels)")
@@ -196,6 +205,7 @@ class CrossSectionViewer:
         diff_bg_frame.rowconfigure(0, weight=1)
 
         self.diff_bg_fig = Figure(figsize=(5.2, 2.5), dpi=100)
+        self.diff_bg_fig.subplots_adjust(left=0.2)
         self.diff_bg_ax = self.diff_bg_fig.add_subplot(111)
         self.diff_bg_ax.set_title("BG-Subtracted Differences")
         self.diff_bg_ax.set_xlabel("Distance (pixels)")
@@ -281,6 +291,10 @@ class CrossSectionViewer:
             label="Synchronize X Axis",
             command=lambda: self._sync_x_axes(canvas.figure),
         )
+        menu.add_command(
+            label="Toggle Y Log Scale",
+            command=lambda: self._toggle_y_log_scale(canvas.figure),
+        )
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -291,6 +305,23 @@ class CrossSectionViewer:
             ax.relim()
             ax.autoscale()
         figure.canvas.draw_idle()
+
+    def _toggle_y_log_scale(self, figure: Figure) -> None:
+        if not figure.axes:
+            return
+        for ax in figure.axes:
+            current = self._axis_use_log(ax)
+            self.axis_log_override[ax] = not current
+        self._refresh_plots()
+        for ax in figure.axes:
+            ax.relim()
+            ax.autoscale()
+            ax.figure.canvas.draw_idle()
+
+    def _axis_use_log(self, ax) -> bool:
+        if ax in self.axis_log_override:
+            return bool(self.axis_log_override[ax])
+        return bool(self.y_log_var.get())
 
     def _sync_x_axes(self, figure: Figure) -> None:
         if not figure.axes:
@@ -513,6 +544,7 @@ class CrossSectionViewer:
         self._refresh_plots()
 
     def _on_log_toggle(self) -> None:
+        self.axis_log_override.clear()
         self._refresh_plots()
 
     def _set_default_indices(self) -> None:
@@ -628,6 +660,54 @@ class CrossSectionViewer:
 
         return distance, names, values
 
+    def load_data(
+        self,
+        distance: np.ndarray,
+        names: list[str],
+        values: list[np.ndarray],
+        source_label: str | None = None,
+    ) -> None:
+        if distance is None or len(values) == 0:
+            messagebox.showinfo("Analyze", "No cross section data available.")
+            return
+
+        dist = np.asarray(distance, dtype=np.float64)
+        series_values = [np.asarray(v, dtype=np.float64) for v in values]
+        lengths = [dist.size] + [v.size for v in series_values if v.size]
+        min_len = min(lengths) if lengths else 0
+        if min_len <= 0:
+            messagebox.showinfo("Analyze", "No cross section data available.")
+            return
+
+        dist = dist[:min_len]
+        series_values = [v[:min_len] for v in series_values]
+
+        self.distance = dist
+        self.series_names = list(names)
+        self.series_values = series_values
+        if source_label:
+            self.file_label_text.set(source_label)
+        else:
+            self.file_label_text.set("AstroCross selection")
+
+        self._configure_table()
+        self._compute_data_type()
+
+        max_index = max(self.distance.size - 1, 0)
+        for scale in (self.bg_scale, self.bright_scale):
+            scale.configure(from_=0, to=max_index)
+            scale.set(0)
+
+        max_width = max(self.distance.size, 1)
+        self.bg_width_spin.configure(from_=1, to=max_width)
+        self.bright_width_spin.configure(from_=1, to=max_width)
+        self.bg_width_var.set(min(self.bg_width_var.get(), max_width))
+        self.bright_width_var.set(min(self.bright_width_var.get(), max_width))
+
+        self._set_controls_state("normal")
+        self._set_default_indices()
+        self._refresh_plots()
+
     def _current_width(self, var: tk.IntVar, count: int) -> int:
         try:
             width = int(var.get())
@@ -698,7 +778,11 @@ class CrossSectionViewer:
         bg_start, bg_end = self._selection_bounds(bg_index, bg_width, count)
         bright_start, bright_end = self._selection_bounds(bright_index, bright_width, count)
 
-        use_log = bool(self.y_log_var.get())
+        use_log_top = self._axis_use_log(self.top_ax)
+        use_log_bottom = self._axis_use_log(self.bottom_ax)
+        use_log_ratio = self._axis_use_log(self.ratio_ax)
+        use_log_diff_orig = self._axis_use_log(self.diff_orig_ax)
+        use_log_diff_bg = self._axis_use_log(self.diff_bg_ax)
 
         def safe_mean(sample: np.ndarray) -> float:
             if sample.size == 0:
@@ -709,7 +793,7 @@ class CrossSectionViewer:
         top_has_positive = False
         for name, values in zip(self.series_names, self.series_values):
             plot_values = np.asarray(values, dtype=np.float64)
-            if use_log:
+            if use_log_top:
                 valid = np.isfinite(plot_values) & (plot_values > 0)
                 top_has_positive = top_has_positive or bool(np.any(valid))
                 plot_values = np.where(valid, plot_values, np.nan)
@@ -732,7 +816,7 @@ class CrossSectionViewer:
         self.top_ax.set_ylabel("Value")
         self.top_ax.legend(loc="best", fontsize=9)
         self.top_ax.grid(True, alpha=0.3)
-        if use_log and top_has_positive:
+        if use_log_top and top_has_positive:
             self.top_ax.set_yscale("log")
         else:
             self.top_ax.set_yscale("linear")
@@ -757,7 +841,7 @@ class CrossSectionViewer:
         bottom_has_positive = False
         for name, values in zip(self.series_names, bg_sub_series):
             plot_values = np.asarray(values, dtype=np.float64)
-            if use_log:
+            if use_log_bottom:
                 valid = np.isfinite(plot_values) & (plot_values > 0)
                 bottom_has_positive = bottom_has_positive or bool(np.any(valid))
                 plot_values = np.where(valid, plot_values, np.nan)
@@ -775,7 +859,7 @@ class CrossSectionViewer:
         self.bottom_ax.set_ylabel("Value - Background")
         self.bottom_ax.legend(loc="best", fontsize=9)
         self.bottom_ax.grid(True, alpha=0.3)
-        if use_log and bottom_has_positive:
+        if use_log_bottom and bottom_has_positive:
             self.bottom_ax.set_yscale("log")
         else:
             self.bottom_ax.set_yscale("linear")
@@ -795,7 +879,7 @@ class CrossSectionViewer:
             )
             ratio_series.append(ratio)
             plot_values = ratio
-            if use_log:
+            if use_log_ratio:
                 valid = np.isfinite(plot_values) & (plot_values > 0)
                 ratio_has_positive = ratio_has_positive or bool(np.any(valid))
                 plot_values = np.where(valid, plot_values, np.nan)
@@ -813,7 +897,7 @@ class CrossSectionViewer:
         if ratio_series:
             self.ratio_ax.legend(loc="best", fontsize=9)
         self.ratio_ax.grid(True, alpha=0.3)
-        if use_log and ratio_has_positive:
+        if use_log_ratio and ratio_has_positive:
             self.ratio_ax.set_yscale("log")
         else:
             self.ratio_ax.set_yscale("linear")
@@ -824,7 +908,7 @@ class CrossSectionViewer:
             baseline = self.series_values[0]
             diff = self.series_values[1] - baseline
             plot_values = np.asarray(diff, dtype=np.float64)
-            if use_log:
+            if use_log_diff_orig:
                 valid = np.isfinite(plot_values) & (plot_values > 0)
                 diff_orig_has_positive = diff_orig_has_positive or bool(np.any(valid))
                 plot_values = np.where(valid, plot_values, np.nan)
@@ -842,7 +926,7 @@ class CrossSectionViewer:
         if len(self.series_values) > 1:
             self.diff_orig_ax.legend(loc="best", fontsize=9)
         self.diff_orig_ax.grid(True, alpha=0.3)
-        if use_log and diff_orig_has_positive:
+        if use_log_diff_orig and diff_orig_has_positive:
             self.diff_orig_ax.set_yscale("log")
         else:
             self.diff_orig_ax.set_yscale("linear")
@@ -853,7 +937,7 @@ class CrossSectionViewer:
             baseline = bg_sub_series[0]
             diff = bg_sub_series[1] - baseline
             plot_values = np.asarray(diff, dtype=np.float64)
-            if use_log:
+            if use_log_diff_bg:
                 valid = np.isfinite(plot_values) & (plot_values > 0)
                 diff_bg_has_positive = diff_bg_has_positive or bool(np.any(valid))
                 plot_values = np.where(valid, plot_values, np.nan)
@@ -871,7 +955,7 @@ class CrossSectionViewer:
         if len(bg_sub_series) > 1:
             self.diff_bg_ax.legend(loc="best", fontsize=9)
         self.diff_bg_ax.grid(True, alpha=0.3)
-        if use_log and diff_bg_has_positive:
+        if use_log_diff_bg and diff_bg_has_positive:
             self.diff_bg_ax.set_yscale("log")
         else:
             self.diff_bg_ax.set_yscale("linear")
