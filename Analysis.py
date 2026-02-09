@@ -1,5 +1,7 @@
 import csv
+import io
 import os
+import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -36,6 +38,7 @@ class CrossSectionViewer:
 
         self._build_layout()
         self._set_controls_state("disabled")
+        self._bind_canvas_interactions()
 
     def _build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -246,6 +249,204 @@ class CrossSectionViewer:
         ):
             widget.configure(state=state)
 
+    def _bind_canvas_interactions(self) -> None:
+        self._drag_state: dict[str, object] | None = None
+        canvases = [
+            self.top_canvas,
+            self.bottom_canvas,
+            self.ratio_canvas,
+            self.diff_orig_canvas,
+            self.diff_bg_canvas,
+        ]
+        for canvas in canvases:
+            canvas.mpl_connect("button_press_event", self._on_plot_press)
+            canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
+            canvas.mpl_connect("button_release_event", self._on_plot_release)
+            canvas.get_tk_widget().bind(
+                "<Button-3>",
+                lambda event, c=canvas: self._show_canvas_menu(event, c),
+            )
+
+    def _show_canvas_menu(self, event: tk.Event, canvas: FigureCanvasTkAgg) -> None:
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(
+            label="Copy Graph",
+            command=lambda: self._copy_graph_to_clipboard(canvas.figure),
+        )
+        menu.add_command(
+            label="Reset Axes",
+            command=lambda: self._reset_axes(canvas.figure),
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _reset_axes(self, figure: Figure) -> None:
+        for ax in figure.axes:
+            ax.relim()
+            ax.autoscale()
+        figure.canvas.draw_idle()
+
+    def _copy_graph_to_clipboard(self, figure: Figure) -> None:
+        buffer = io.BytesIO()
+        figure.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
+        png_bytes = buffer.getvalue()
+
+        if self._copy_image_windows(png_bytes):
+            return
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as handle:
+                handle.write(png_bytes)
+                temp_path = handle.name
+            self.root.clipboard_clear()
+            self.root.clipboard_append(temp_path)
+            messagebox.showinfo(
+                "Copy Graph",
+                "Image saved and path copied to clipboard:\n"
+                f"{temp_path}\n\n"
+                "Install pywin32 to copy images directly to the clipboard.",
+            )
+        except Exception as exc:
+            messagebox.showerror("Copy Graph", f"Unable to copy graph: {exc}")
+
+    def _copy_image_windows(self, png_bytes: bytes) -> bool:
+        try:
+            import win32clipboard
+            from PIL import Image
+        except Exception:
+            return False
+
+        try:
+            image = Image.open(io.BytesIO(png_bytes))
+            output = io.BytesIO()
+            image.convert("RGB").save(output, "BMP")
+            data = output.getvalue()[14:]
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+            return True
+        except Exception:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+            return False
+
+    def _on_plot_press(self, event) -> None:
+        if event.inaxes is None or event.button != 1:
+            return
+        ax = event.inaxes
+        bbox = ax.bbox
+        pad = 25
+        axis_mode = None
+        zone = None
+
+        if event.x < bbox.x0 + pad:
+            axis_mode = "y"
+            rel = (event.y - bbox.y0) / max(bbox.height, 1.0)
+            if rel > 0.66:
+                zone = "top"
+            elif rel < 0.33:
+                zone = "bottom"
+            else:
+                zone = "middle"
+        elif event.y < bbox.y0 + pad:
+            axis_mode = "x"
+            rel = (event.x - bbox.x0) / max(bbox.width, 1.0)
+            if rel > 0.66:
+                zone = "right"
+            elif rel < 0.33:
+                zone = "left"
+            else:
+                zone = "middle"
+
+        if axis_mode is None:
+            return
+
+        self._drag_state = {
+            "ax": ax,
+            "mode": axis_mode,
+            "zone": zone,
+            "start_xlim": ax.get_xlim(),
+            "start_ylim": ax.get_ylim(),
+            "start_xdata": event.xdata,
+            "start_ydata": event.ydata,
+        }
+
+    def _on_plot_motion(self, event) -> None:
+        if not self._drag_state or event.inaxes is None:
+            return
+        ax = self._drag_state["ax"]
+        if ax is not event.inaxes:
+            return
+        mode = self._drag_state["mode"]
+        zone = self._drag_state["zone"]
+        start_xlim = self._drag_state["start_xlim"]
+        start_ylim = self._drag_state["start_ylim"]
+        start_x = self._drag_state["start_xdata"]
+        start_y = self._drag_state["start_ydata"]
+
+        if mode == "y":
+            if start_y is None or event.ydata is None:
+                return
+            dy = event.ydata - start_y
+            ymin, ymax = start_ylim
+            if zone == "top":
+                ymax = ymax + dy
+            elif zone == "bottom":
+                ymin = ymin + dy
+            else:
+                ymin = ymin + dy
+                ymax = ymax + dy
+            ymin, ymax = self._sanitize_limits(ax, ymin, ymax, axis="y")
+            ax.set_ylim(ymin, ymax)
+        elif mode == "x":
+            if start_x is None or event.xdata is None:
+                return
+            dx = event.xdata - start_x
+            xmin, xmax = start_xlim
+            if zone == "right":
+                xmax = xmax + dx
+            elif zone == "left":
+                xmin = xmin + dx
+            else:
+                xmin = xmin + dx
+                xmax = xmax + dx
+            xmin, xmax = self._sanitize_limits(ax, xmin, xmax, axis="x")
+            ax.set_xlim(xmin, xmax)
+
+        event.canvas.draw_idle()
+
+    def _on_plot_release(self, _event) -> None:
+        self._drag_state = None
+
+    def _sanitize_limits(self, ax, lo: float, hi: float, axis: str) -> tuple[float, float]:
+        if lo == hi:
+            hi = lo + 1.0
+        if lo > hi:
+            lo, hi = hi, lo
+        if axis == "y" and ax.get_yscale() == "log":
+            min_pos = 1e-12
+            if hi <= min_pos:
+                hi = min_pos * 10.0
+            if lo <= min_pos:
+                lo = min_pos
+            if lo >= hi:
+                lo = hi / 10.0
+        if axis == "x" and ax.get_xscale() == "log":
+            min_pos = 1e-12
+            if hi <= min_pos:
+                hi = min_pos * 10.0
+            if lo <= min_pos:
+                lo = min_pos
+            if lo >= hi:
+                lo = hi / 10.0
+        return lo, hi
+
     def _set_pane_defaults(self) -> None:
         try:
             self.root.update_idletasks()
@@ -263,7 +464,7 @@ class CrossSectionViewer:
                 self.left_pane.sashpos(0, int(left_height * 0.5))
             total_height = self.main_pane.winfo_height()
             if total_height > 0:
-                self.main_pane.sashpos(0, int(total_height * 0.6))
+                self.main_pane.sashpos(0, int(total_height * 0.33))
         except Exception:
             pass
 
@@ -430,11 +631,16 @@ class CrossSectionViewer:
         return start, end
 
     def _configure_table(self) -> None:
-        columns = ["Output", "Mean", "Std Dev"]
+        columns = ["Output", "Signal Type", "Mean", "Std Dev", "CV"]
         self.summary_table.configure(columns=columns, show="headings")
         for col in columns:
             self.summary_table.heading(col, text=col)
-            width = 220 if col == "Output" else 110
+            if col == "Output":
+                width = 210
+            elif col == "Signal Type":
+                width = 95
+            else:
+                width = 110
             self.summary_table.column(col, width=width, anchor="center")
         for item in self.summary_table.get_children():
             self.summary_table.delete(item)
@@ -496,7 +702,7 @@ class CrossSectionViewer:
         if bright_end > bright_start:
             left = self.distance[bright_start]
             right = self.distance[bright_end - 1]
-            self.top_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
+            self.top_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
             self.top_ax.axvspan(left, right, color="#ffb84d", alpha=0.25)
 
         self.top_ax.set_title("Cross Section")
@@ -541,7 +747,7 @@ class CrossSectionViewer:
                 alpha=0.6,
             )
         self.bottom_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
-        self.bottom_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
+        self.bottom_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
         self.bottom_ax.set_title("Background Subtracted")
         self.bottom_ax.set_xlabel("Distance (pixels)")
         self.bottom_ax.set_ylabel("Value - Background")
@@ -576,7 +782,7 @@ class CrossSectionViewer:
                 label = f"{name}/{base_name}"
                 self.ratio_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
         self.ratio_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
-        self.ratio_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
+        self.ratio_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
         self.ratio_ax.set_title("Abs Ratio (BG Subtracted)")
         self.ratio_ax.set_xlabel("Distance (pixels)")
         self.ratio_ax.set_ylabel("Abs Ratio")
@@ -603,7 +809,7 @@ class CrossSectionViewer:
                 label = f"{name}-{base_name}"
                 self.diff_orig_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
         self.diff_orig_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
-        self.diff_orig_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
+        self.diff_orig_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
         self.diff_orig_ax.set_title("Original Differences")
         self.diff_orig_ax.set_xlabel("Distance (pixels)")
         self.diff_orig_ax.set_ylabel("Value Difference")
@@ -630,7 +836,7 @@ class CrossSectionViewer:
                 label = f"{name}-{base_name}"
                 self.diff_bg_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
         self.diff_bg_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
-        self.diff_bg_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
+        self.diff_bg_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
         self.diff_bg_ax.set_title("BG-Subtracted Differences")
         self.diff_bg_ax.set_xlabel("Distance (pixels)")
         self.diff_bg_ax.set_ylabel("Value Difference")
@@ -693,7 +899,7 @@ class CrossSectionViewer:
         for item in self.summary_table.get_children():
             self.summary_table.delete(item)
 
-        rows: list[tuple[str, float, float]] = []
+        rows: list[tuple[str, str, float, float]] = []
         name1 = self.series_names[0]
         name2 = self.series_names[1] if len(self.series_names) > 1 else None
 
@@ -701,14 +907,14 @@ class CrossSectionViewer:
         cs2 = self.series_values[1] if len(self.series_values) > 1 else None
         cs1_bg_mean, cs1_bg_std = mean_std(cs1, bg_start, bg_end)
         cs1_br_mean, cs1_br_std = mean_std(cs1, bright_start, bright_end)
-        rows.append((f"{name1} signal @ Background", cs1_bg_mean, cs1_bg_std))
-        rows.append((f"{name1} signal @ Bright", cs1_br_mean, cs1_br_std))
+        rows.append((f"{name1} signal", "Background", cs1_bg_mean, cs1_bg_std))
+        rows.append((f"{name1} signal", "Bright", cs1_br_mean, cs1_br_std))
 
         if cs2 is not None and name2 is not None:
             cs2_bg_mean, cs2_bg_std = mean_std(cs2, bg_start, bg_end)
             cs2_br_mean, cs2_br_std = mean_std(cs2, bright_start, bright_end)
-            rows.append((f"{name2} signal @ Background", cs2_bg_mean, cs2_bg_std))
-            rows.append((f"{name2} signal @ Bright", cs2_br_mean, cs2_br_std))
+            rows.append((f"{name2} signal", "Background", cs2_bg_mean, cs2_bg_std))
+            rows.append((f"{name2} signal", "Bright", cs2_br_mean, cs2_br_std))
         else:
             cs2_bg_mean = cs2_bg_std = cs2_br_mean = cs2_br_std = float("nan")
 
@@ -716,11 +922,11 @@ class CrossSectionViewer:
         cs2_bgsub = bg_sub_series[1] if len(bg_sub_series) > 1 else np.array([])
 
         cs1_bgsub_br_mean, cs1_bgsub_br_std = mean_std(cs1_bgsub, bright_start, bright_end)
-        rows.append((f"{name1} minus BG @ Bright", cs1_bgsub_br_mean, cs1_bgsub_br_std))
+        rows.append((f"{name1} minus BG", "Bright", cs1_bgsub_br_mean, cs1_bgsub_br_std))
 
         if cs2 is not None and name2 is not None:
             cs2_bgsub_br_mean, cs2_bgsub_br_std = mean_std(cs2_bgsub, bright_start, bright_end)
-            rows.append((f"{name2} minus BG @ Bright", cs2_bgsub_br_mean, cs2_bgsub_br_std))
+            rows.append((f"{name2} minus BG", "Bright", cs2_bgsub_br_mean, cs2_bgsub_br_std))
         else:
             cs2_bgsub_br_mean = cs2_bgsub_br_std = float("nan")
 
@@ -734,9 +940,9 @@ class CrossSectionViewer:
                 )
             )
             ratio_mean, ratio_std = mean_std(ratio_values, bright_start, bright_end)
-            rows.append(("Abs Ratio @ Bright (cs1/cs2)", ratio_mean, ratio_std))
+            rows.append(("Abs Ratio (cs1/cs2)", "Bright", ratio_mean, ratio_std))
         else:
-            rows.append(("Abs Ratio @ Bright (cs1/cs2)", float("nan"), float("nan")))
+            rows.append(("Abs Ratio (cs1/cs2)", "Bright", float("nan"), float("nan")))
 
         if cs2 is not None:
             diff_bg = cs1[bg_start:bg_end] - cs2[bg_start:bg_end]
@@ -745,11 +951,11 @@ class CrossSectionViewer:
             diff_bg_std = float(np.nanstd(diff_bg)) if diff_bg.size else float("nan")
             diff_br_mean = float(np.nanmean(diff_br)) if diff_br.size else float("nan")
             diff_br_std = float(np.nanstd(diff_br)) if diff_br.size else float("nan")
-            rows.append(("cs1 - cs2 @ Background", diff_bg_mean, diff_bg_std))
-            rows.append(("cs1 - cs2 @ Bright", diff_br_mean, diff_br_std))
+            rows.append(("cs1 - cs2", "Background", diff_bg_mean, diff_bg_std))
+            rows.append(("cs1 - cs2", "Bright", diff_br_mean, diff_br_std))
         else:
-            rows.append(("cs1 - cs2 @ Background", float("nan"), float("nan")))
-            rows.append(("cs1 - cs2 @ Bright", float("nan"), float("nan")))
+            rows.append(("cs1 - cs2", "Background", float("nan"), float("nan")))
+            rows.append(("cs1 - cs2", "Bright", float("nan"), float("nan")))
 
         if cs2 is not None and cs1_bgsub.size and cs2_bgsub.size:
             diff_bgsub_bg = cs1_bgsub[bg_start:bg_end] - cs2_bgsub[bg_start:bg_end]
@@ -758,14 +964,22 @@ class CrossSectionViewer:
             diff_bgsub_bg_std = float(np.nanstd(diff_bgsub_bg)) if diff_bgsub_bg.size else float("nan")
             diff_bgsub_br_mean = float(np.nanmean(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
             diff_bgsub_br_std = float(np.nanstd(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
-            rows.append(("BG-sub diff @ Background", diff_bgsub_bg_mean, diff_bgsub_bg_std))
-            rows.append(("BG-sub diff @ Bright", diff_bgsub_br_mean, diff_bgsub_br_std))
+            rows.append(("BG-sub diff", "Background", diff_bgsub_bg_mean, diff_bgsub_bg_std))
+            rows.append(("BG-sub diff", "Bright", diff_bgsub_br_mean, diff_bgsub_br_std))
         else:
-            rows.append(("BG-sub diff @ Background", float("nan"), float("nan")))
-            rows.append(("BG-sub diff @ Bright", float("nan"), float("nan")))
+            rows.append(("BG-sub diff", "Background", float("nan"), float("nan")))
+            rows.append(("BG-sub diff", "Bright", float("nan"), float("nan")))
 
-        for label, mean_val, std_val in rows:
-            self.summary_table.insert("", "end", values=[label, fmt(mean_val), fmt(std_val)])
+        for label, signal_type, mean_val, std_val in rows:
+            if mean_val is None or not np.isfinite(mean_val) or mean_val == 0:
+                cv_val = float("nan")
+            else:
+                cv_val = std_val / mean_val
+            self.summary_table.insert(
+                "",
+                "end",
+                values=[label, signal_type, fmt(mean_val), fmt(std_val), fmt(cv_val)],
+            )
 
 
 def main() -> None:
