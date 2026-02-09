@@ -277,6 +277,10 @@ class CrossSectionViewer:
             label="Reset Axes",
             command=lambda: self._reset_axes(canvas.figure),
         )
+        menu.add_command(
+            label="Synchronize X Axis",
+            command=lambda: self._sync_x_axes(canvas.figure),
+        )
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -287,6 +291,24 @@ class CrossSectionViewer:
             ax.relim()
             ax.autoscale()
         figure.canvas.draw_idle()
+
+    def _sync_x_axes(self, figure: Figure) -> None:
+        if not figure.axes:
+            return
+        ref_ax = figure.axes[0]
+        xlim = ref_ax.get_xlim()
+        for ax in self._all_axes():
+            ax.set_xlim(xlim)
+            ax.figure.canvas.draw_idle()
+
+    def _all_axes(self) -> list:
+        return [
+            self.top_ax,
+            self.bottom_ax,
+            self.ratio_ax,
+            self.diff_orig_ax,
+            self.diff_bg_ax,
+        ]
 
     def _copy_graph_to_clipboard(self, figure: Figure) -> None:
         buffer = io.BytesIO()
