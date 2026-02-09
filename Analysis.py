@@ -691,7 +691,7 @@ class CrossSectionViewer:
                 valid = np.isfinite(plot_values) & (plot_values > 0)
                 top_has_positive = top_has_positive or bool(np.any(valid))
                 plot_values = np.where(valid, plot_values, np.nan)
-            self.top_ax.plot(self.distance, plot_values, label=name, linewidth=1.2)
+            self.top_ax.plot(self.distance, plot_values, label=name, linewidth=1.2, alpha=0.6)
 
         if bg_end > bg_start:
             left = self.distance[bg_start]
@@ -761,29 +761,31 @@ class CrossSectionViewer:
         self.ratio_ax.clear()
         ratio_series: list[np.ndarray] = []
         ratio_has_positive = False
-        if bg_sub_series:
+        if len(bg_sub_series) > 1:
             baseline = bg_sub_series[0]
-            base_name = self.series_names[0]
-            for name, values in zip(self.series_names, bg_sub_series):
-                ratio = np.abs(
-                    np.divide(
-                        values,
-                        baseline,
-                        out=np.full_like(values, np.nan),
-                        where=baseline != 0,
-                    )
+            ratio = np.abs(
+                np.divide(
+                    bg_sub_series[1],
+                    baseline,
+                    out=np.full_like(bg_sub_series[1], np.nan),
+                    where=baseline != 0,
                 )
-                ratio_series.append(ratio)
-                plot_values = ratio
-                if use_log:
-                    valid = np.isfinite(plot_values) & (plot_values > 0)
-                    ratio_has_positive = ratio_has_positive or bool(np.any(valid))
-                    plot_values = np.where(valid, plot_values, np.nan)
-                label = f"{name}/{base_name}"
-                self.ratio_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
+            )
+            ratio_series.append(ratio)
+            plot_values = ratio
+            if use_log:
+                valid = np.isfinite(plot_values) & (plot_values > 0)
+                ratio_has_positive = ratio_has_positive or bool(np.any(valid))
+                plot_values = np.where(valid, plot_values, np.nan)
+            self.ratio_ax.plot(
+                self.distance,
+                plot_values,
+                label="Abs ratio (BG subtracted)",
+                linewidth=1.2,
+            )
         self.ratio_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
         self.ratio_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
-        self.ratio_ax.set_title("Abs Ratio (BG Subtracted)")
+        self.ratio_ax.set_title("")
         self.ratio_ax.set_xlabel("Distance (pixels)")
         self.ratio_ax.set_ylabel("Abs Ratio")
         if ratio_series:
@@ -796,24 +798,26 @@ class CrossSectionViewer:
 
         self.diff_orig_ax.clear()
         diff_orig_has_positive = False
-        if self.series_values:
+        if len(self.series_values) > 1:
             baseline = self.series_values[0]
-            base_name = self.series_names[0]
-            for name, values in zip(self.series_names, self.series_values):
-                diff = values - baseline
-                plot_values = np.asarray(diff, dtype=np.float64)
-                if use_log:
-                    valid = np.isfinite(plot_values) & (plot_values > 0)
-                    diff_orig_has_positive = diff_orig_has_positive or bool(np.any(valid))
-                    plot_values = np.where(valid, plot_values, np.nan)
-                label = f"{name}-{base_name}"
-                self.diff_orig_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
+            diff = self.series_values[1] - baseline
+            plot_values = np.asarray(diff, dtype=np.float64)
+            if use_log:
+                valid = np.isfinite(plot_values) & (plot_values > 0)
+                diff_orig_has_positive = diff_orig_has_positive or bool(np.any(valid))
+                plot_values = np.where(valid, plot_values, np.nan)
+            self.diff_orig_ax.plot(
+                self.distance,
+                plot_values,
+                label="Original Differences",
+                linewidth=1.2,
+            )
         self.diff_orig_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
         self.diff_orig_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
-        self.diff_orig_ax.set_title("Original Differences")
+        self.diff_orig_ax.set_title("")
         self.diff_orig_ax.set_xlabel("Distance (pixels)")
         self.diff_orig_ax.set_ylabel("Value Difference")
-        if self.series_values:
+        if len(self.series_values) > 1:
             self.diff_orig_ax.legend(loc="best", fontsize=9)
         self.diff_orig_ax.grid(True, alpha=0.3)
         if use_log and diff_orig_has_positive:
@@ -823,24 +827,26 @@ class CrossSectionViewer:
 
         self.diff_bg_ax.clear()
         diff_bg_has_positive = False
-        if bg_sub_series:
+        if len(bg_sub_series) > 1:
             baseline = bg_sub_series[0]
-            base_name = self.series_names[0]
-            for name, values in zip(self.series_names, bg_sub_series):
-                diff = values - baseline
-                plot_values = np.asarray(diff, dtype=np.float64)
-                if use_log:
-                    valid = np.isfinite(plot_values) & (plot_values > 0)
-                    diff_bg_has_positive = diff_bg_has_positive or bool(np.any(valid))
-                    plot_values = np.where(valid, plot_values, np.nan)
-                label = f"{name}-{base_name}"
-                self.diff_bg_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
+            diff = bg_sub_series[1] - baseline
+            plot_values = np.asarray(diff, dtype=np.float64)
+            if use_log:
+                valid = np.isfinite(plot_values) & (plot_values > 0)
+                diff_bg_has_positive = diff_bg_has_positive or bool(np.any(valid))
+                plot_values = np.where(valid, plot_values, np.nan)
+            self.diff_bg_ax.plot(
+                self.distance,
+                plot_values,
+                label="BG-subtracted differences",
+                linewidth=1.2,
+            )
         self.diff_bg_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
         self.diff_bg_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
-        self.diff_bg_ax.set_title("BG-Subtracted Differences")
+        self.diff_bg_ax.set_title("")
         self.diff_bg_ax.set_xlabel("Distance (pixels)")
         self.diff_bg_ax.set_ylabel("Value Difference")
-        if bg_sub_series:
+        if len(bg_sub_series) > 1:
             self.diff_bg_ax.legend(loc="best", fontsize=9)
         self.diff_bg_ax.grid(True, alpha=0.3)
         if use_log and diff_bg_has_positive:
