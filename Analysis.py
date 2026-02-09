@@ -144,31 +144,70 @@ class CrossSectionViewer:
         self.bottom_pane = ttk.Panedwindow(bottom_section, orient="horizontal")
         self.bottom_pane.grid(row=0, column=0, sticky="nsew")
 
-        bottom_plot_frame = ttk.Frame(self.bottom_pane)
-        bottom_plot_frame.columnconfigure(0, weight=1)
-        bottom_plot_frame.rowconfigure(0, weight=1)
+        self.left_pane = ttk.Panedwindow(self.bottom_pane, orient="vertical")
+
+        self.top_row_pane = ttk.Panedwindow(self.left_pane, orient="horizontal")
+        self.bottom_row_pane = ttk.Panedwindow(self.left_pane, orient="horizontal")
+
+        bg_sub_frame = ttk.Frame(self.top_row_pane)
+        bg_sub_frame.columnconfigure(0, weight=1)
+        bg_sub_frame.rowconfigure(0, weight=1)
 
         self.bottom_fig = Figure(figsize=(5.2, 2.5), dpi=100)
         self.bottom_ax = self.bottom_fig.add_subplot(111)
         self.bottom_ax.set_title("Background Subtracted")
         self.bottom_ax.set_xlabel("Distance (pixels)")
         self.bottom_ax.set_ylabel("Value - Background")
-        self.bottom_canvas = FigureCanvasTkAgg(self.bottom_fig, master=bottom_plot_frame)
+        self.bottom_canvas = FigureCanvasTkAgg(self.bottom_fig, master=bg_sub_frame)
         self.bottom_canvas.draw()
         self.bottom_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
-        ratio_plot_frame = ttk.Frame(self.bottom_pane)
-        ratio_plot_frame.columnconfigure(0, weight=1)
-        ratio_plot_frame.rowconfigure(0, weight=1)
+        ratio_frame = ttk.Frame(self.top_row_pane)
+        ratio_frame.columnconfigure(0, weight=1)
+        ratio_frame.rowconfigure(0, weight=1)
 
         self.ratio_fig = Figure(figsize=(5.2, 2.5), dpi=100)
         self.ratio_ax = self.ratio_fig.add_subplot(111)
         self.ratio_ax.set_title("Abs Ratio (BG Subtracted)")
         self.ratio_ax.set_xlabel("Distance (pixels)")
         self.ratio_ax.set_ylabel("Abs Ratio")
-        self.ratio_canvas = FigureCanvasTkAgg(self.ratio_fig, master=ratio_plot_frame)
+        self.ratio_canvas = FigureCanvasTkAgg(self.ratio_fig, master=ratio_frame)
         self.ratio_canvas.draw()
         self.ratio_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+
+        diff_orig_frame = ttk.Frame(self.bottom_row_pane)
+        diff_orig_frame.columnconfigure(0, weight=1)
+        diff_orig_frame.rowconfigure(0, weight=1)
+
+        self.diff_orig_fig = Figure(figsize=(5.2, 2.5), dpi=100)
+        self.diff_orig_ax = self.diff_orig_fig.add_subplot(111)
+        self.diff_orig_ax.set_title("Original Differences")
+        self.diff_orig_ax.set_xlabel("Distance (pixels)")
+        self.diff_orig_ax.set_ylabel("Value Difference")
+        self.diff_orig_canvas = FigureCanvasTkAgg(self.diff_orig_fig, master=diff_orig_frame)
+        self.diff_orig_canvas.draw()
+        self.diff_orig_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+
+        diff_bg_frame = ttk.Frame(self.bottom_row_pane)
+        diff_bg_frame.columnconfigure(0, weight=1)
+        diff_bg_frame.rowconfigure(0, weight=1)
+
+        self.diff_bg_fig = Figure(figsize=(5.2, 2.5), dpi=100)
+        self.diff_bg_ax = self.diff_bg_fig.add_subplot(111)
+        self.diff_bg_ax.set_title("BG-Subtracted Differences")
+        self.diff_bg_ax.set_xlabel("Distance (pixels)")
+        self.diff_bg_ax.set_ylabel("Value Difference")
+        self.diff_bg_canvas = FigureCanvasTkAgg(self.diff_bg_fig, master=diff_bg_frame)
+        self.diff_bg_canvas.draw()
+        self.diff_bg_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+
+        self.top_row_pane.add(bg_sub_frame, weight=1)
+        self.top_row_pane.add(ratio_frame, weight=1)
+        self.bottom_row_pane.add(diff_orig_frame, weight=1)
+        self.bottom_row_pane.add(diff_bg_frame, weight=1)
+
+        self.left_pane.add(self.top_row_pane, weight=1)
+        self.left_pane.add(self.bottom_row_pane, weight=1)
 
         table_frame = ttk.Frame(self.bottom_pane)
         table_frame.rowconfigure(1, weight=1)
@@ -189,9 +228,8 @@ class CrossSectionViewer:
             xscrollcommand=table_scroll_x.set,
         )
 
-        self.bottom_pane.add(bottom_plot_frame, weight=3)
-        self.bottom_pane.add(ratio_plot_frame, weight=3)
-        self.bottom_pane.add(table_frame, weight=2)
+        self.bottom_pane.add(self.left_pane, weight=3)
+        self.bottom_pane.add(table_frame, weight=1)
 
         self.main_pane.add(top_section, weight=3)
         self.main_pane.add(bottom_section, weight=2)
@@ -213,8 +251,16 @@ class CrossSectionViewer:
             self.root.update_idletasks()
             total_width = self.bottom_pane.winfo_width()
             if total_width > 0:
-                self.bottom_pane.sashpos(0, int(total_width * 0.45))
-                self.bottom_pane.sashpos(1, int(total_width * 0.75))
+                self.bottom_pane.sashpos(0, int(total_width * 0.67))
+                top_row_width = self.top_row_pane.winfo_width()
+                bottom_row_width = self.bottom_row_pane.winfo_width()
+                if top_row_width > 0:
+                    self.top_row_pane.sashpos(0, int(top_row_width * 0.5))
+                if bottom_row_width > 0:
+                    self.bottom_row_pane.sashpos(0, int(bottom_row_width * 0.5))
+            left_height = self.left_pane.winfo_height()
+            if left_height > 0:
+                self.left_pane.sashpos(0, int(left_height * 0.5))
             total_height = self.main_pane.winfo_height()
             if total_height > 0:
                 self.main_pane.sashpos(0, int(total_height * 0.6))
@@ -384,13 +430,11 @@ class CrossSectionViewer:
         return start, end
 
     def _configure_table(self) -> None:
-        columns = ["Region"]
-        for name in self.series_names:
-            columns.extend([f"{name} raw", f"{name} -bg", f"{name} ratio"])
-        self.summary_table.configure(columns=columns)
+        columns = ["Output", "Mean", "Std Dev"]
+        self.summary_table.configure(columns=columns, show="headings")
         for col in columns:
             self.summary_table.heading(col, text=col)
-            width = 90 if col == "Region" else 110
+            width = 220 if col == "Output" else 110
             self.summary_table.column(col, width=width, anchor="center")
         for item in self.summary_table.get_children():
             self.summary_table.delete(item)
@@ -544,6 +588,60 @@ class CrossSectionViewer:
         else:
             self.ratio_ax.set_yscale("linear")
 
+        self.diff_orig_ax.clear()
+        diff_orig_has_positive = False
+        if self.series_values:
+            baseline = self.series_values[0]
+            base_name = self.series_names[0]
+            for name, values in zip(self.series_names, self.series_values):
+                diff = values - baseline
+                plot_values = np.asarray(diff, dtype=np.float64)
+                if use_log:
+                    valid = np.isfinite(plot_values) & (plot_values > 0)
+                    diff_orig_has_positive = diff_orig_has_positive or bool(np.any(valid))
+                    plot_values = np.where(valid, plot_values, np.nan)
+                label = f"{name}-{base_name}"
+                self.diff_orig_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
+        self.diff_orig_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
+        self.diff_orig_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
+        self.diff_orig_ax.set_title("Original Differences")
+        self.diff_orig_ax.set_xlabel("Distance (pixels)")
+        self.diff_orig_ax.set_ylabel("Value Difference")
+        if self.series_values:
+            self.diff_orig_ax.legend(loc="best", fontsize=9)
+        self.diff_orig_ax.grid(True, alpha=0.3)
+        if use_log and diff_orig_has_positive:
+            self.diff_orig_ax.set_yscale("log")
+        else:
+            self.diff_orig_ax.set_yscale("linear")
+
+        self.diff_bg_ax.clear()
+        diff_bg_has_positive = False
+        if bg_sub_series:
+            baseline = bg_sub_series[0]
+            base_name = self.series_names[0]
+            for name, values in zip(self.series_names, bg_sub_series):
+                diff = values - baseline
+                plot_values = np.asarray(diff, dtype=np.float64)
+                if use_log:
+                    valid = np.isfinite(plot_values) & (plot_values > 0)
+                    diff_bg_has_positive = diff_bg_has_positive or bool(np.any(valid))
+                    plot_values = np.where(valid, plot_values, np.nan)
+                label = f"{name}-{base_name}"
+                self.diff_bg_ax.plot(self.distance, plot_values, label=label, linewidth=1.2)
+        self.diff_bg_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
+        self.diff_bg_ax.axvline(self.distance[bright_index], color="#cc7a00", linewidth=1.2)
+        self.diff_bg_ax.set_title("BG-Subtracted Differences")
+        self.diff_bg_ax.set_xlabel("Distance (pixels)")
+        self.diff_bg_ax.set_ylabel("Value Difference")
+        if bg_sub_series:
+            self.diff_bg_ax.legend(loc="best", fontsize=9)
+        self.diff_bg_ax.grid(True, alpha=0.3)
+        if use_log and diff_bg_has_positive:
+            self.diff_bg_ax.set_yscale("log")
+        else:
+            self.diff_bg_ax.set_yscale("linear")
+
         self._update_table(
             raw_bg_means,
             raw_bright_means,
@@ -559,6 +657,8 @@ class CrossSectionViewer:
         self.top_canvas.draw_idle()
         self.bottom_canvas.draw_idle()
         self.ratio_canvas.draw_idle()
+        self.diff_orig_canvas.draw_idle()
+        self.diff_bg_canvas.draw_idle()
 
     def _update_table(
         self,
@@ -582,38 +682,90 @@ class CrossSectionViewer:
                 return f"{value:.0f}"
             return f"{value:.{self.table_decimals}f}"
 
-        def ratio_mean(series: np.ndarray, start: int, end: int) -> float:
+        def mean_std(series: np.ndarray, start: int, end: int) -> tuple[float, float]:
             if series.size == 0:
-                return float("nan")
+                return float("nan"), float("nan")
             sample = series[start:end]
             if sample.size == 0:
-                return float("nan")
-            return float(np.nanmean(sample))
+                return float("nan"), float("nan")
+            return float(np.nanmean(sample)), float(np.nanstd(sample))
 
         for item in self.summary_table.get_children():
             self.summary_table.delete(item)
 
-        bg_row = ["Background"]
-        bright_row = ["Bright"]
-        for idx, name in enumerate(self.series_names):
-            raw_bg = raw_bg_means[idx] if idx < len(raw_bg_means) else float("nan")
-            raw_bright = raw_bright_means[idx] if idx < len(raw_bright_means) else float("nan")
-            offset = background_offsets[idx] if idx < len(background_offsets) else 0.0
-            sub_bg = raw_bg - offset
-            sub_bright = raw_bright - offset
+        rows: list[tuple[str, float, float]] = []
+        name1 = self.series_names[0]
+        name2 = self.series_names[1] if len(self.series_names) > 1 else None
 
-            if idx < len(ratio_series):
-                ratio_bg = ratio_mean(ratio_series[idx], bg_start, bg_end)
-                ratio_bright = ratio_mean(ratio_series[idx], bright_start, bright_end)
-            else:
-                ratio_bg = float("nan")
-                ratio_bright = float("nan")
+        cs1 = self.series_values[0]
+        cs2 = self.series_values[1] if len(self.series_values) > 1 else None
+        cs1_bg_mean, cs1_bg_std = mean_std(cs1, bg_start, bg_end)
+        cs1_br_mean, cs1_br_std = mean_std(cs1, bright_start, bright_end)
+        rows.append((f"{name1} signal @ Background", cs1_bg_mean, cs1_bg_std))
+        rows.append((f"{name1} signal @ Bright", cs1_br_mean, cs1_br_std))
 
-            bg_row.extend([fmt(raw_bg), fmt(sub_bg), fmt(ratio_bg)])
-            bright_row.extend([fmt(raw_bright), fmt(sub_bright), fmt(ratio_bright)])
+        if cs2 is not None and name2 is not None:
+            cs2_bg_mean, cs2_bg_std = mean_std(cs2, bg_start, bg_end)
+            cs2_br_mean, cs2_br_std = mean_std(cs2, bright_start, bright_end)
+            rows.append((f"{name2} signal @ Background", cs2_bg_mean, cs2_bg_std))
+            rows.append((f"{name2} signal @ Bright", cs2_br_mean, cs2_br_std))
+        else:
+            cs2_bg_mean = cs2_bg_std = cs2_br_mean = cs2_br_std = float("nan")
 
-        self.summary_table.insert("", "end", values=bg_row)
-        self.summary_table.insert("", "end", values=bright_row)
+        cs1_bgsub = bg_sub_series[0] if bg_sub_series else np.array([])
+        cs2_bgsub = bg_sub_series[1] if len(bg_sub_series) > 1 else np.array([])
+
+        cs1_bgsub_br_mean, cs1_bgsub_br_std = mean_std(cs1_bgsub, bright_start, bright_end)
+        rows.append((f"{name1} minus BG @ Bright", cs1_bgsub_br_mean, cs1_bgsub_br_std))
+
+        if cs2 is not None and name2 is not None:
+            cs2_bgsub_br_mean, cs2_bgsub_br_std = mean_std(cs2_bgsub, bright_start, bright_end)
+            rows.append((f"{name2} minus BG @ Bright", cs2_bgsub_br_mean, cs2_bgsub_br_std))
+        else:
+            cs2_bgsub_br_mean = cs2_bgsub_br_std = float("nan")
+
+        if cs2 is not None:
+            ratio_values = np.abs(
+                np.divide(
+                    cs1_bgsub,
+                    cs2_bgsub,
+                    out=np.full_like(cs1_bgsub, np.nan),
+                    where=cs2_bgsub != 0,
+                )
+            )
+            ratio_mean, ratio_std = mean_std(ratio_values, bright_start, bright_end)
+            rows.append(("Abs Ratio @ Bright (cs1/cs2)", ratio_mean, ratio_std))
+        else:
+            rows.append(("Abs Ratio @ Bright (cs1/cs2)", float("nan"), float("nan")))
+
+        if cs2 is not None:
+            diff_bg = cs1[bg_start:bg_end] - cs2[bg_start:bg_end]
+            diff_br = cs1[bright_start:bright_end] - cs2[bright_start:bright_end]
+            diff_bg_mean = float(np.nanmean(diff_bg)) if diff_bg.size else float("nan")
+            diff_bg_std = float(np.nanstd(diff_bg)) if diff_bg.size else float("nan")
+            diff_br_mean = float(np.nanmean(diff_br)) if diff_br.size else float("nan")
+            diff_br_std = float(np.nanstd(diff_br)) if diff_br.size else float("nan")
+            rows.append(("cs1 - cs2 @ Background", diff_bg_mean, diff_bg_std))
+            rows.append(("cs1 - cs2 @ Bright", diff_br_mean, diff_br_std))
+        else:
+            rows.append(("cs1 - cs2 @ Background", float("nan"), float("nan")))
+            rows.append(("cs1 - cs2 @ Bright", float("nan"), float("nan")))
+
+        if cs2 is not None and cs1_bgsub.size and cs2_bgsub.size:
+            diff_bgsub_bg = cs1_bgsub[bg_start:bg_end] - cs2_bgsub[bg_start:bg_end]
+            diff_bgsub_br = cs1_bgsub[bright_start:bright_end] - cs2_bgsub[bright_start:bright_end]
+            diff_bgsub_bg_mean = float(np.nanmean(diff_bgsub_bg)) if diff_bgsub_bg.size else float("nan")
+            diff_bgsub_bg_std = float(np.nanstd(diff_bgsub_bg)) if diff_bgsub_bg.size else float("nan")
+            diff_bgsub_br_mean = float(np.nanmean(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
+            diff_bgsub_br_std = float(np.nanstd(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
+            rows.append(("BG-sub diff @ Background", diff_bgsub_bg_mean, diff_bgsub_bg_std))
+            rows.append(("BG-sub diff @ Bright", diff_bgsub_br_mean, diff_bgsub_br_std))
+        else:
+            rows.append(("BG-sub diff @ Background", float("nan"), float("nan")))
+            rows.append(("BG-sub diff @ Bright", float("nan"), float("nan")))
+
+        for label, mean_val, std_val in rows:
+            self.summary_table.insert("", "end", values=[label, fmt(mean_val), fmt(std_val)])
 
 
 def main() -> None:
