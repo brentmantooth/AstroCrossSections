@@ -974,6 +974,32 @@ class CrossSectionViewer:
                 return float("nan")
             return (bright_mean - dark_mean) / math.sqrt(denom_term)
 
+        def snr_value_from_std(
+            bright_mean: float,
+            dark_mean: float,
+            bright_std: float,
+            dark_std: float,
+            width_bright: int,
+            width_dark: int,
+        ) -> float:
+            if width_bright <= 0 or width_dark <= 0:
+                return float("nan")
+            if bright_mean is None or dark_mean is None:
+                return float("nan")
+            if bright_std is None or dark_std is None:
+                return float("nan")
+            if (
+                not np.isfinite(bright_mean)
+                or not np.isfinite(dark_mean)
+                or not np.isfinite(bright_std)
+                or not np.isfinite(dark_std)
+            ):
+                return float("nan")
+            denom_term = (bright_std ** 2) / width_bright + (dark_std ** 2) / width_dark
+            if denom_term <= 0:
+                return float("nan")
+            return (bright_mean - dark_mean) / math.sqrt(denom_term)
+
         def welch_ttest(a: np.ndarray, b: np.ndarray) -> tuple[float, float, float, int, int] | None:
             a = a[np.isfinite(a)]
             b = b[np.isfinite(b)]
@@ -1002,6 +1028,26 @@ class CrossSectionViewer:
             if cs2 is not None
             else float("nan")
         )
+        snr_cs1_std = snr_value_from_std(
+            cs1_br_mean,
+            cs1_bg_mean,
+            cs1_br_std,
+            cs1_bg_std,
+            bright_width,
+            dark_width,
+        )
+        snr_cs2_std = (
+            snr_value_from_std(
+                cs2_br_mean,
+                cs2_bg_mean,
+                cs2_br_std,
+                cs2_bg_std,
+                bright_width,
+                dark_width,
+            )
+            if cs2 is not None
+            else float("nan")
+        )
         snr_factor_method1 = None
         if cs2 is not None and np.isfinite(snr_cs1) and np.isfinite(snr_cs2):
             abs1 = abs(snr_cs1)
@@ -1011,12 +1057,22 @@ class CrossSectionViewer:
             if lo > 0:
                 snr_factor_method1 = hi / lo
 
-        snr_factor_method2 = None
-        if cs2 is not None and np.isfinite(cs1_br_mean) and np.isfinite(cs1_bg_mean) and np.isfinite(cs2_bg_mean):
-            numerator = cs1_br_mean + cs1_bg_mean
-            denominator = cs1_br_mean + cs2_bg_mean
-            if numerator > 0 and denominator > 0:
-                snr_factor_method2 = math.sqrt(numerator / denominator)
+        snr_factor_method2a = None
+        snr_factor_method2b = None
+        if cs2 is not None and (
+            np.isfinite(cs1_br_mean)
+            and np.isfinite(cs1_bg_mean)
+            and np.isfinite(cs2_br_mean)
+            and np.isfinite(cs2_bg_mean)
+        ):
+            numerator_2a = cs1_br_mean + cs1_bg_mean
+            denominator_2a = cs2_br_mean + cs2_bg_mean
+            if numerator_2a > 0 and denominator_2a > 0:
+                snr_factor_method2a = math.sqrt(numerator_2a / denominator_2a)
+            numerator_2b = cs2_br_mean + cs2_bg_mean
+            denominator_2b = cs1_br_mean + cs1_bg_mean
+            if numerator_2b > 0 and denominator_2b > 0:
+                snr_factor_method2b = math.sqrt(numerator_2b / denominator_2b)
         ttest_result = (
             welch_ttest(
                 bg_sub_series[0][bright_start:bright_end],
@@ -1091,6 +1147,7 @@ class CrossSectionViewer:
         text_lines.append("- Same camera, settings, and integration time.")
         text_lines.append("- Only difference is the filter.")
         text_lines.append("- Signal is not read-noise dominated.")
+        text_lines.append("- If images are stacked, SNR may be slightly overestimated because sampled pixels may have correlation.")
         for label, signal_type, mean_val, std_val in rows:
             if mean_val is None or not np.isfinite(mean_val) or mean_val == 0:
                 cv_val = float("nan")
@@ -1127,6 +1184,8 @@ class CrossSectionViewer:
                 )
         text_lines.append("")
         text_lines.append("SNR (bright vs dark)")
+        text_lines.append("Method 1 assumes Var(B) ~ B, Var(D) ~ D.")
+        text_lines.append("Method 1 SNR = (Bright mean - Dark mean) / sqrt((Bright mean / Bright width) + (Dark mean / Dark width))")
         text_lines.append(f"Widths: bright={bright_width}, dark={dark_width}")
         cs1_label = name1 or "CS1"
         text_lines.append(
@@ -1140,17 +1199,47 @@ class CrossSectionViewer:
         else:
             text_lines.append("CS2: -")
         text_lines.append("")
+        text_lines.append("Method 2 uses Var(B)=Std(B)^2/Bright Width, Var(D)=Std(D)^2/Dark Width.")
+        text_lines.append("Method 2 SNR = (Bright mean - Dark mean) / sqrt((Std(B)^2 / Bright width) + (Std(D)^2 / Dark width))")
+        text_lines.append(
+            f"{cs1_label}: SNR={fmt_snr(snr_cs1_std)}"
+        )
+        if cs2 is not None:
+            text_lines.append(
+                f"{cs2_label}: SNR={fmt_snr(snr_cs2_std)}"
+            )
+        else:
+            text_lines.append("CS2: -")
+        text_lines.append("")
         text_lines.append("SNR Factor")
         if snr_factor_method1 is not None and np.isfinite(snr_factor_method1):
             text_lines.append(f"Method 1 (max/min SNR): {snr_factor_method1:.3f}")
         else:
             text_lines.append("Method 1 (max/min SNR): -")
-        if snr_factor_method2 is not None and np.isfinite(snr_factor_method2):
+        if snr_factor_method2a is not None and np.isfinite(snr_factor_method2a):
             text_lines.append(
-                f"Method 2: sqrt((B1 + D1) / (B1 + D2)) = {snr_factor_method2:.3f}"
+                f"Method 3A: sqrt((B1 + D1) / (B2 + D2)) = {snr_factor_method2a:.3f}"
             )
         else:
-            text_lines.append("Method 2: sqrt((B1 + D1) / (B1 + D2)) = -")
+            text_lines.append("Method 3A: sqrt((B1 + D1) / (B2 + D2)) = -")
+        if snr_factor_method2b is not None and np.isfinite(snr_factor_method2b):
+            text_lines.append(
+                f"Method 3B: sqrt((B2 + D2) / (B1 + D1)) = {snr_factor_method2b:.3f}"
+            )
+        else:
+            text_lines.append("Method 3B: sqrt((B2 + D2) / (B1 + D1)) = -")
+        if (
+            snr_factor_method2a is not None
+            and np.isfinite(snr_factor_method2a)
+            and snr_factor_method2b is not None
+            and np.isfinite(snr_factor_method2b)
+        ):
+            snr_factor_method2 = max(snr_factor_method2a, snr_factor_method2b)
+            text_lines.append(
+                f"Method 3 (max of 3A/3B): {snr_factor_method2:.3f}"
+            )
+        else:
+            text_lines.append("Method 3 (max of 3A/3B): -")
         self.summary_text.configure(state="normal")
         self.summary_text.delete("1.0", "end")
         self.summary_text.insert("end", "\n".join(text_lines))
