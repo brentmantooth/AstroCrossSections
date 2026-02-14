@@ -1,4 +1,5 @@
 .venv/
 build/
 __pycache__/
-__pycache__
+dist/*.exe
+dist/*.zip
