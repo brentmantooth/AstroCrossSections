@@ -25,7 +25,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # AstroCross uses Tkinter; exclude Qt bindings to avoid PyInstaller conflicts.
+    excludes=["PyQt6", "PySide6"],
     noarchive=False,
     optimize=0,
 )

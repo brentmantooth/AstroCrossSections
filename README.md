@@ -1,42 +1,53 @@
 # AstroCrossSections
 
-AstroCrossSections is a small Tkinter desktop app for loading two images and extracting matched line
-cross sections. It supports common image formats and astronomical data, and plots both profiles
-on the same graph for quick comparison.
+AstroCrossSections is a Tkinter desktop tool for comparing two astrophotography images by sampling line cross sections, plotting the results, and running follow-up signal analysis.
 
-See the YouTube video for a demo: https://youtu.be/OwB1C-wKpCU
+See the demo video: https://youtu.be/OwB1C-wKpCU
 
 ![AstroCrossSections screenshot](AstroCrossScreen.png)
+![AstroCrossSections Analysis screenshot](CrossSectionAnalyze.png)
 
-## Features
+## What this project includes
 
-- Load two images (PNG/JPEG/TIF/BMP, FITS, XISF)
-- For RGB images, choose luminance or keep RGB channels
-- RGB mode plots separate red/green/blue cross sections
-- Click two points on Image 1 to draw a line and sample both images
-- Live preview while moving the mouse before the second click
-- Plot both cross sections together (linear or log scale)
-- Optional histogram mode with log-spaced bins (combined Image 1 + Image 2)
-- Registration check when Image 2 loads (dx/dy/error shown in status bar)
-- One-click image registration (align Image 2 to Image 1)
-- Automatic center-cropping to a common size for pixel-accurate mapping
-- Export cross section data to CSV (supports RGB channels)
-- Export histogram data to CSV (supports RGB channels)
-- Synchronized zoom and pan across both images
-- Optional auto-stretch display toggle (does not affect measurements)
-- PixInsight-style STF auto-stretch for display
-- Clear images button to reset both panels
+- `AstroCross.py`: main image comparison app.
+- `Analysis.py`: analysis viewer for cross-section CSV data (also opened directly from `AstroCross.py` via the **Analyze** button).
 
-## Executable
+## Feature highlights
 
-Download the Windows 64-bit package: [AstroCross-win64.zip](dist/AstroCross-win64.zip)
+- Load two images in PNG/JPEG/TIF/BMP, FITS, or XISF.
+- RGB handling: choose luminance conversion or keep RGB channels.
+- Matched cross-section sampling with bilinear interpolation on both images.
+- Live line preview while selecting points.
+- Synchronized zoom/pan between image panels.
+- Responsive display downsampling for large images (measurement still uses original data).
+- Optional STF-style auto-stretch for display only.
+- Registration diagnostics using phase cross-correlation (`dx`, `dy`, `err` in status bar).
+- One-click alignment of Image 2 to Image 1 with `astroalign`.
+- Automatic center-crop to a common size for pixel-matched comparisons.
+- Cross-section plotting in linear/log y-scale.
+- Histogram mode with log-spaced bins and per-image median markers.
+- CSV export for cross sections and histograms (including RGB channel columns).
+- Built-in analysis window launch from current selection.
 
+## Analysis window features (`Analysis.py`)
+
+- Open exported cross-section CSV files directly.
+- Select background and bright regions with center and width controls.
+- Multi-plot view includes cross section, background-subtracted cross section, absolute bright-region ratio (error bars), and original/background-subtracted difference plots.
+- Summary table with mean, standard deviation, and coefficient of variation.
+- Text summary with assumptions, Welch-style comparison output, attenuation estimate, and SNR factor methods.
+- Right-click plot menu supports Copy Graph, Reset Axes, Synchronize X Axis, and per-plot Y-log toggle.
+- `pywin32` enables direct image clipboard copy for Copy Graph on Windows.
 
 ## Requirements
 
-- Python 3
-- Packages: `numpy`, `pillow`, `matplotlib`, `scikit-image`, `astroalign`
-- Optional: `astropy` for FITS, `xisf` for XISF
+- Python 3.10+
+- Required packages: `numpy`, `pillow`, `matplotlib`
+- Optional package `astropy` for FITS support.
+- Optional package `xisf` for XISF support.
+- Optional package `scikit-image` for registration diagnostics.
+- Optional package `astroalign` for image alignment.
+- Optional package `pywin32` for direct image clipboard copy in the analysis viewer.
 
 ## Install
 
@@ -44,10 +55,10 @@ Download the Windows 64-bit package: [AstroCross-win64.zip](dist/AstroCross-win6
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
-pip install numpy pillow matplotlib astropy xisf scikit-image astroalign
+pip install numpy pillow matplotlib astropy xisf scikit-image astroalign pywin32
 ```
 
-If you do not need FITS/XISF support, you can omit `astropy` or `xisf`.
+Install only the optional packages you need.
 
 ## Run
 
@@ -55,35 +66,30 @@ If you do not need FITS/XISF support, you can omit `astropy` or `xisf`.
 python AstroCross.py
 ```
 
-## Usage
+Optional standalone analysis viewer:
 
-1. Click **Load Image 1** (this enables **Load Image 2**).
-2. If the image is RGB, choose luminance or keep RGB channels.
-3. Click **Load Image 2** (forced to the same mode as Image 1).
-4. Review the registration info in the status bar; if |dx| or |dy| > 1.5, consider **Register Images**.
-5. Click two points on Image 1 to define the cross section.
-6. Move the mouse after the first click to preview the line, then click again to lock it.
-7. Click a third time to reset and start a new selection.
-8. Use **Export CSV** to save the distance/intensity table.
+```powershell
+python Analysis.py
+```
 
-### Controls
+## Main workflow (`AstroCross.py`)
 
-- Mouse wheel over an image: zoom (synchronized)
-- Right-click + drag: pan (synchronized)
-- **Reset View**: return to fit-to-window view
-- **Auto-stretch display**: toggle between raw and stretched display
-- **Log scale plot**: toggle linear vs log y-axis
-- **Histograms**: switch plot to histograms (log-spaced bins; includes median markers)
-- **Register Images**: align Image 2 to Image 1 (requires `astroalign`)
-- **Clear Images**: clears both images and disables Image 2 until Image 1 is loaded
+1. Load **Image 1** (this enables **Image 2**).
+2. If RGB, choose luminance or RGB mode.
+3. Load **Image 2** (uses the same color mode as Image 1).
+4. Review registration info in the status bar.
+5. Click two points on Image 1 to define the sampling line.
+6. Use **Log scale plot** or **Histograms** as needed.
+7. Use **Export CSV** to save cross-section or histogram data.
+8. Use **Analyze** (cross-section mode only) to open the analysis window on the current selection.
 
-## Notes
+## Build Windows executable
 
-- The plot and CSV always use the original image data, not the display stretch.
-- When image sizes differ, both are center-cropped to a common size for 1:1 pixel mapping.
-- The status bar shows registration shift and error (requires `scikit-image`).
-- In RGB mode, plots and CSV export keep channels separate for both images.
-- Histogram mode ignores non-positive values (log-spaced bins) and shows per-image medians.
+```powershell
+pyinstaller --clean --noconfirm AstroCross.spec
+```
+
+The spec file builds `dist/AstroCross.exe` and also creates `dist/AstroCross-win64.zip`.
 
 ## License
 
