@@ -34,6 +34,8 @@ class CrossSectionViewer:
         self.file_label_text = tk.StringVar(value="No data loaded")
         self.y_log_var = tk.BooleanVar(value=False)
         self.axis_log_override: dict[object, bool] = {}
+        self._pane_defaults_attempts = 0
+        self._pane_defaults_set = False
         self._build_layout()
         self._set_controls_state("disabled")
         self._bind_canvas_interactions()
@@ -52,6 +54,7 @@ class CrossSectionViewer:
         top_frame.columnconfigure(0, weight=1)
         top_frame.rowconfigure(0, weight=1)
         self.top_fig = Figure(figsize=(6, 3), dpi=100)
+        self.top_fig.subplots_adjust(bottom=0.18)
         self.top_ax = self.top_fig.add_subplot(111)
         self.top_ax.set_title("Cross Section")
         self.top_ax.set_xlabel("Distance (pixels)")
@@ -144,7 +147,7 @@ class CrossSectionViewer:
         bg_sub_frame.columnconfigure(0, weight=1)
         bg_sub_frame.rowconfigure(0, weight=1)
         self.bottom_fig = Figure(figsize=(5.2, 2.5), dpi=100)
-        self.bottom_fig.subplots_adjust(left=0.2)
+        self.bottom_fig.subplots_adjust(left=0.2, bottom=0.2)
         self.bottom_ax = self.bottom_fig.add_subplot(111)
         self.bottom_ax.set_title("Background Subtracted")
         self.bottom_ax.set_xlabel("Distance (pixels)")
@@ -156,10 +159,10 @@ class CrossSectionViewer:
         ratio_frame.columnconfigure(0, weight=1)
         ratio_frame.rowconfigure(0, weight=1)
         self.ratio_fig = Figure(figsize=(5.2, 2.5), dpi=100)
-        self.ratio_fig.subplots_adjust(left=0.2)
+        self.ratio_fig.subplots_adjust(left=0.2, bottom=0.2)
         self.ratio_ax = self.ratio_fig.add_subplot(111)
         self.ratio_ax.set_title("Abs Ratio (BG Subtracted)")
-        self.ratio_ax.set_xlabel("Distance (pixels)")
+        self.ratio_ax.set_xlabel("Bright Region")
         self.ratio_ax.set_ylabel("Abs Ratio")
         self.ratio_canvas = FigureCanvasTkAgg(self.ratio_fig, master=ratio_frame)
         self.ratio_canvas.draw()
@@ -168,7 +171,7 @@ class CrossSectionViewer:
         diff_orig_frame.columnconfigure(0, weight=1)
         diff_orig_frame.rowconfigure(0, weight=1)
         self.diff_orig_fig = Figure(figsize=(5.2, 2.5), dpi=100)
-        self.diff_orig_fig.subplots_adjust(left=0.2)
+        self.diff_orig_fig.subplots_adjust(left=0.2, bottom=0.2)
         self.diff_orig_ax = self.diff_orig_fig.add_subplot(111)
         self.diff_orig_ax.set_title("Original Differences")
         self.diff_orig_ax.set_xlabel("Distance (pixels)")
@@ -180,7 +183,7 @@ class CrossSectionViewer:
         diff_bg_frame.columnconfigure(0, weight=1)
         diff_bg_frame.rowconfigure(0, weight=1)
         self.diff_bg_fig = Figure(figsize=(5.2, 2.5), dpi=100)
-        self.diff_bg_fig.subplots_adjust(left=0.2)
+        self.diff_bg_fig.subplots_adjust(left=0.2, bottom=0.2)
         self.diff_bg_ax = self.diff_bg_fig.add_subplot(111)
         self.diff_bg_ax.set_title("BG-Subtracted Differences")
         self.diff_bg_ax.set_xlabel("Distance (pixels)")
@@ -264,18 +267,19 @@ class CrossSectionViewer:
             label="Copy Graph",
             command=lambda: self._copy_graph_to_clipboard(canvas.figure),
         )
-        menu.add_command(
-            label="Reset Axes",
-            command=lambda: self._reset_axes(canvas.figure),
-        )
-        menu.add_command(
-            label="Synchronize X Axis",
-            command=lambda: self._sync_x_axes(canvas.figure),
-        )
-        menu.add_command(
-            label="Toggle Y Log Scale",
-            command=lambda: self._toggle_y_log_scale(canvas.figure),
-        )
+        if canvas is not self.ratio_canvas:
+            menu.add_command(
+                label="Reset Axes",
+                command=lambda: self._reset_axes(canvas.figure),
+            )
+            menu.add_command(
+                label="Synchronize X Axis",
+                command=lambda: self._sync_x_axes(canvas.figure),
+            )
+            menu.add_command(
+                label="Toggle Y Log Scale",
+                command=lambda: self._toggle_y_log_scale(canvas.figure),
+            )
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -300,6 +304,8 @@ class CrossSectionViewer:
             ax.figure.canvas.draw_idle()
 
     def _axis_use_log(self, ax) -> bool:
+        if ax is self.ratio_ax:
+            return False
         if ax in self.axis_log_override:
             return bool(self.axis_log_override[ax])
         return bool(self.y_log_var.get())
@@ -308,8 +314,12 @@ class CrossSectionViewer:
         if not figure.axes:
             return
         ref_ax = figure.axes[0]
+        if ref_ax is self.ratio_ax:
+            return
         xlim = ref_ax.get_xlim()
         for ax in self._all_axes():
+            if ax is self.ratio_ax:
+                continue
             ax.set_xlim(xlim)
             ax.figure.canvas.draw_idle()
 
@@ -474,25 +484,35 @@ class CrossSectionViewer:
         return lo, hi
 
     def _set_pane_defaults(self) -> None:
+        if self._pane_defaults_set:
+            return
         try:
             self.root.update_idletasks()
             total_width = self.bottom_pane.winfo_width()
+            top_row_width = self.top_row_pane.winfo_width()
+            bottom_row_width = self.bottom_row_pane.winfo_width()
+            left_height = self.left_pane.winfo_height()
+            total_height = self.main_pane.winfo_height()
+
+            min_dim = min(total_width, top_row_width, bottom_row_width, left_height, total_height)
+            if min_dim < 50 and self._pane_defaults_attempts < 10:
+                self._pane_defaults_attempts += 1
+                self.root.after(50, self._set_pane_defaults)
+                return
+
             if total_width > 0:
                 self.bottom_pane.sashpos(0, int(total_width * 0.67))
-                top_row_width = self.top_row_pane.winfo_width()
-                bottom_row_width = self.bottom_row_pane.winfo_width()
-                if top_row_width > 0:
-                    self.top_row_pane.sashpos(0, int(top_row_width * 0.5))
-                if bottom_row_width > 0:
-                    self.bottom_row_pane.sashpos(0, int(bottom_row_width * 0.5))
-            left_height = self.left_pane.winfo_height()
+            if top_row_width > 0:
+                self.top_row_pane.sashpos(0, int(top_row_width * 0.5))
+            if bottom_row_width > 0:
+                self.bottom_row_pane.sashpos(0, int(bottom_row_width * 0.5))
             if left_height > 0:
                 self.left_pane.sashpos(0, int(left_height * 0.5))
-            total_height = self.main_pane.winfo_height()
             if total_height > 0:
                 self.main_pane.sashpos(0, int(total_height * 0.33))
+            self._pane_defaults_set = True
         except Exception:
-            pass
+            self._pane_defaults_set = True
 
     def _on_bg_slider(self, value: str) -> None:
         if self.distance is None:
@@ -805,6 +825,9 @@ class CrossSectionViewer:
         self.ratio_ax.clear()
         ratio_series: list[np.ndarray] = []
         ratio_has_positive = False
+        ratio_mean = float("nan")
+        ratio_std = float("nan")
+        ratio_x = 1.0
         if len(bg_sub_series) > 1:
             baseline = bg_sub_series[0]
             ratio = np.abs(
@@ -816,23 +839,42 @@ class CrossSectionViewer:
                 )
             )
             ratio_series.append(ratio)
-            plot_values = ratio
-            if use_log_ratio:
-                valid = np.isfinite(plot_values) & (plot_values > 0)
-                ratio_has_positive = ratio_has_positive or bool(np.any(valid))
-                plot_values = np.where(valid, plot_values, np.nan)
-            self.ratio_ax.plot(
-                self.distance,
-                plot_values,
-                label="Abs ratio (BG subtracted)",
-                linewidth=1.2,
-            )
-        self.ratio_ax.axvline(self.distance[bg_index], color="black", linewidth=1.2)
-        self.ratio_ax.axvline(self.distance[bright_index], color="magenta", linewidth=1.2)
+            ratio_sample = ratio[bright_start:bright_end] if bright_end > bright_start else ratio
+            if ratio_sample.size:
+                ratio_mean = float(np.nanmean(ratio_sample))
+                ratio_std = float(np.nanstd(ratio_sample))
+            ratio_has_positive = np.isfinite(ratio_mean) and ratio_mean > 0
+            if np.isfinite(ratio_mean):
+                yerr = ratio_std if np.isfinite(ratio_std) else 0.0
+                if use_log_ratio and ratio_mean > 0:
+                    lower_err = yerr
+                    upper_err = yerr
+                    if yerr > 0 and ratio_mean - yerr <= 0:
+                        min_pos = max(ratio_mean * 0.05, 1e-6)
+                        lower_err = max(ratio_mean - min_pos, 0.0)
+                    self.ratio_ax.errorbar(
+                        [ratio_x],
+                        [ratio_mean],
+                        yerr=[[lower_err], [upper_err]],
+                        fmt="o",
+                        capsize=4,
+                        label="Bright region ratio",
+                    )
+                else:
+                    self.ratio_ax.errorbar(
+                        [ratio_x],
+                        [ratio_mean],
+                        yerr=yerr,
+                        fmt="o",
+                        capsize=4,
+                        label="Bright region ratio",
+                    )
         self.ratio_ax.set_title("")
-        self.ratio_ax.set_xlabel("Distance (pixels)")
+        self.ratio_ax.set_xlabel("Bright Region")
         self.ratio_ax.set_ylabel("Abs Ratio")
-        if ratio_series:
+        self.ratio_ax.axhline(1.0, color="gray", linestyle=":", linewidth=1.2)
+        self.ratio_ax.set_xlim(0.0, 2.0)
+        if np.isfinite(ratio_mean):
             self.ratio_ax.legend(loc="best", fontsize=9)
         self.ratio_ax.grid(True, alpha=0.3)
         if use_log_ratio and ratio_has_positive:
@@ -1001,6 +1043,7 @@ class CrossSectionViewer:
             return (bright_mean - dark_mean) / math.sqrt(denom_term)
 
         def welch_ttest(a: np.ndarray, b: np.ndarray) -> tuple[float, float, float, int, int] | None:
+            # This is used to evaluate the potential for signal attenuation in the bright region
             a = a[np.isfinite(a)]
             b = b[np.isfinite(b)]
             n1 = int(a.size)
@@ -1109,6 +1152,9 @@ class CrossSectionViewer:
                     where=cs2_bgsub != 0,
                 )
             )
+            if np.mean(ratio_values) < 1.0:
+                ratio_values = 1/ratio_values
+                
             ratio_mean, ratio_std = mean_std(ratio_values, bright_start, bright_end)
             rows.append(("Abs Ratio (cs1/cs2)", "Bright", ratio_mean, ratio_std))
         else:
@@ -1198,36 +1244,37 @@ class CrossSectionViewer:
             )
         else:
             text_lines.append("CS2: -")
-        text_lines.append("")
-        text_lines.append("Method 2 uses Var(B)=Std(B)^2/Bright Width, Var(D)=Std(D)^2/Dark Width.")
-        text_lines.append("Method 2 SNR = (Bright mean - Dark mean) / sqrt((Std(B)^2 / Bright width) + (Std(D)^2 / Dark width))")
-        text_lines.append(
-            f"{cs1_label}: SNR={fmt_snr(snr_cs1_std)}"
-        )
-        if cs2 is not None:
-            text_lines.append(
-                f"{cs2_label}: SNR={fmt_snr(snr_cs2_std)}"
-            )
-        else:
-            text_lines.append("CS2: -")
-        text_lines.append("")
-        text_lines.append("SNR Factor")
+
+        # text_lines.append("")
+        # text_lines.append("Method 2 uses Var(B)=Std(B)^2/Bright Width, Var(D)=Std(D)^2/Dark Width.")
+        # text_lines.append("Method 2 SNR = (Bright mean - Dark mean) / sqrt((Std(B)^2 / Bright width) + (Std(D)^2 / Dark width))")
+        # text_lines.append(
+        #     f"{cs1_label}: SNR={fmt_snr(snr_cs1_std)}"
+        # )
+        # if cs2 is not None:
+        #     text_lines.append(
+        #         f"{cs2_label}: SNR={fmt_snr(snr_cs2_std)}"
+        #     )
+        # else:
+        #     text_lines.append("CS2: -")
+        # text_lines.append("")
+        # text_lines.append("SNR Factor")
         if snr_factor_method1 is not None and np.isfinite(snr_factor_method1):
             text_lines.append(f"Method 1 (max/min SNR): {snr_factor_method1:.3f}")
         else:
             text_lines.append("Method 1 (max/min SNR): -")
-        if snr_factor_method2a is not None and np.isfinite(snr_factor_method2a):
-            text_lines.append(
-                f"Method 3A: sqrt((B1 + D1) / (B2 + D2)) = {snr_factor_method2a:.3f}"
-            )
-        else:
-            text_lines.append("Method 3A: sqrt((B1 + D1) / (B2 + D2)) = -")
-        if snr_factor_method2b is not None and np.isfinite(snr_factor_method2b):
-            text_lines.append(
-                f"Method 3B: sqrt((B2 + D2) / (B1 + D1)) = {snr_factor_method2b:.3f}"
-            )
-        else:
-            text_lines.append("Method 3B: sqrt((B2 + D2) / (B1 + D1)) = -")
+        # if snr_factor_method2a is not None and np.isfinite(snr_factor_method2a):
+        #     text_lines.append(
+        #         f"Method 3A: sqrt((B1 + D1) / (B2 + D2)) = {snr_factor_method2a:.3f}"
+        #     )
+        # else:
+        #     text_lines.append("Method 3A: sqrt((B1 + D1) / (B2 + D2)) = -")
+        # if snr_factor_method2b is not None and np.isfinite(snr_factor_method2b):
+        #     text_lines.append(
+        #         f"Method 3B: sqrt((B2 + D2) / (B1 + D1)) = {snr_factor_method2b:.3f}"
+        #     )
+        # else:
+        #     text_lines.append("Method 3B: sqrt((B2 + D2) / (B1 + D1)) = -")
         if (
             snr_factor_method2a is not None
             and np.isfinite(snr_factor_method2a)
@@ -1236,10 +1283,10 @@ class CrossSectionViewer:
         ):
             snr_factor_method2 = max(snr_factor_method2a, snr_factor_method2b)
             text_lines.append(
-                f"Method 3 (max of 3A/3B): {snr_factor_method2:.3f}"
+                f"Method 2 sqrt((B1 + D1) / (B2 + D2)): {snr_factor_method2:.3f}"
             )
         else:
-            text_lines.append("Method 3 (max of 3A/3B): -")
+            text_lines.append("Method 2 sqrt((B1 + D1) / (B2 + D2)): -")
         self.summary_text.configure(state="normal")
         self.summary_text.delete("1.0", "end")
         self.summary_text.insert("end", "\n".join(text_lines))

@@ -52,6 +52,7 @@ AXIS_TITLE_SIZE = 13
 LEGEND_FONT_SIZE = 9
 HIST_BINS = 256
 HIST_MIN_POS = 1e-6
+DISPLAY_MAX_DIM = 2048
 
 
 def is_fits_path(path: str) -> bool:
@@ -264,9 +265,10 @@ def crop_pair_to_common(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.nd
 
 
 class ImageState:
-    def __init__(self, canvas: tk.Canvas, name: str):
+    def __init__(self, canvas: tk.Canvas, name: str, display_max_dim: int = DISPLAY_MAX_DIM):
         self.canvas = canvas
         self.name = name
+        self.display_max_dim = max(256, int(display_max_dim))
         self.path: str | None = None
         self.data: np.ndarray | None = None
         self.data_kind: str | None = None
@@ -335,11 +337,20 @@ class ImageState:
         self.scale = scale
         self.offset = (x0, y0)
 
-        if self.data.ndim == 2:
-            disp = normalize_for_display(self.data, stretch=stretch)
+        downsample = max(1, int(math.ceil(max(w, h) / self.display_max_dim)))
+        if downsample > 1:
+            if self.data.ndim == 2:
+                preview = self.data[::downsample, ::downsample]
+            else:
+                preview = self.data[::downsample, ::downsample, :]
+        else:
+            preview = self.data
+
+        if preview.ndim == 2:
+            disp = normalize_for_display(preview, stretch=stretch)
             img = Image.fromarray(disp, mode="L")
         else:
-            channels = [normalize_for_display(self.data[..., idx], stretch=stretch) for idx in range(3)]
+            channels = [normalize_for_display(preview[..., idx], stretch=stretch) for idx in range(3)]
             disp = np.stack(channels, axis=2)
             img = Image.fromarray(disp, mode="RGB")
         img = img.resize((disp_w, disp_h), Image.Resampling.NEAREST)
@@ -369,6 +380,7 @@ class AstroCrossApp:
         self.root = root
         self.root.title("AstroCross Sections")
         self.root.geometry("1200x800")
+        self._resize_job: str | None = None
 
         self.main = ttk.Frame(root, padding=8)
         self.main.grid(row=0, column=0, sticky="nsew")
@@ -497,8 +509,8 @@ class AstroCrossApp:
         self.right_canvas.bind("<B3-Motion>", lambda event: self.on_pan_move(event, self.image2))
         self.left_canvas.bind("<ButtonRelease-3>", self.on_pan_end)
         self.right_canvas.bind("<ButtonRelease-3>", self.on_pan_end)
-        self.left_canvas.bind("<Configure>", lambda _evt: self.apply_view())
-        self.right_canvas.bind("<Configure>", lambda _evt: self.apply_view())
+        self.left_canvas.bind("<Configure>", lambda _evt: self.schedule_apply_view())
+        self.right_canvas.bind("<Configure>", lambda _evt: self.schedule_apply_view())
 
     def update_status_label(self) -> None:
         if self.registration_info:
@@ -1210,6 +1222,18 @@ class AstroCrossApp:
         self.image1.redraw(stretch=stretch, zoom=self.zoom, center_norm=self.center_norm)
         self.image2.redraw(stretch=stretch, zoom=self.zoom, center_norm=self.center_norm)
         self.update_line_overlay()
+
+    def schedule_apply_view(self) -> None:
+        if self._resize_job is not None:
+            try:
+                self.root.after_cancel(self._resize_job)
+            except Exception:
+                pass
+        self._resize_job = self.root.after(60, self._apply_view_from_resize)
+
+    def _apply_view_from_resize(self) -> None:
+        self._resize_job = None
+        self.apply_view()
 
     def update_display_mode(self) -> None:
         self.apply_view()
