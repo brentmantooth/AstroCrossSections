@@ -26,9 +26,9 @@ class CrossSectionViewer:
         self.data_is_integer = False
         self.table_decimals = 3
         self.bg_index_var = tk.IntVar(value=0)
-        self.bg_width_var = tk.IntVar(value=15)
+        self.bg_width_var = tk.IntVar(value=20)
         self.bright_index_var = tk.IntVar(value=0)
-        self.bright_width_var = tk.IntVar(value=15)
+        self.bright_width_var = tk.IntVar(value=20)
         self.bg_value_text = tk.StringVar(value="X: -")
         self.bright_value_text = tk.StringVar(value="X: -")
         self.file_label_text = tk.StringVar(value="No data loaded")
@@ -992,13 +992,13 @@ class CrossSectionViewer:
         cs2 = self.series_values[1] if len(self.series_values) > 1 else None
         cs1_bg_mean, cs1_bg_std = mean_std(cs1, bg_start, bg_end)
         cs1_br_mean, cs1_br_std = mean_std(cs1, bright_start, bright_end)
-        rows.append((f"{name1} signal", "Background", cs1_bg_mean, cs1_bg_std))
-        rows.append((f"{name1} signal", "Bright", cs1_br_mean, cs1_br_std))
+        rows.append((f"{name1}", "Background", cs1_bg_mean, cs1_bg_std))
+        rows.append((f"{name1}", "Bright", cs1_br_mean, cs1_br_std))
         if cs2 is not None and name2 is not None:
             cs2_bg_mean, cs2_bg_std = mean_std(cs2, bg_start, bg_end)
             cs2_br_mean, cs2_br_std = mean_std(cs2, bright_start, bright_end)
-            rows.append((f"{name2} signal", "Background", cs2_bg_mean, cs2_bg_std))
-            rows.append((f"{name2} signal", "Bright", cs2_br_mean, cs2_br_std))
+            rows.append((f"{name2}", "Background", cs2_bg_mean, cs2_bg_std))
+            rows.append((f"{name2}", "Bright", cs2_br_mean, cs2_br_std))
         else:
             cs2_bg_mean = cs2_bg_std = cs2_br_mean = cs2_br_std = float("nan")
         bright_width = max(bright_end - bright_start, 1)
@@ -1178,10 +1178,8 @@ class CrossSectionViewer:
             diff_bgsub_bg_std = float(np.nanstd(diff_bgsub_bg)) if diff_bgsub_bg.size else float("nan")
             diff_bgsub_br_mean = float(np.nanmean(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
             diff_bgsub_br_std = float(np.nanstd(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
-            rows.append(("BG-sub diff", "Background", diff_bgsub_bg_mean, diff_bgsub_bg_std))
             rows.append(("BG-sub diff", "Bright", diff_bgsub_br_mean, diff_bgsub_br_std))
         else:
-            rows.append(("BG-sub diff", "Background", float("nan"), float("nan")))
             rows.append(("BG-sub diff", "Bright", float("nan"), float("nan")))
 
         def fmt_snr(value: float) -> str:
@@ -1193,7 +1191,6 @@ class CrossSectionViewer:
         text_lines.append("- Same camera, settings, and integration time.")
         text_lines.append("- Only difference is the filter.")
         text_lines.append("- Signal is not read-noise dominated.")
-        text_lines.append("- If images are stacked, SNR may be slightly overestimated because sampled pixels may have correlation.")
         for label, signal_type, mean_val, std_val in rows:
             if mean_val is None or not np.isfinite(mean_val) or mean_val == 0:
                 cv_val = float("nan")
@@ -1229,8 +1226,6 @@ class CrossSectionViewer:
                     f"Attenuation (BG-sub bright, CS2 vs CS1) approx {attenuation_pct:.2f}%"
                 )
         text_lines.append("")
-        text_lines.append("SNR (bright vs dark)")
-        text_lines.append("Method 1 assumes Var(B) ~ B, Var(D) ~ D.")
         text_lines.append("Method 1 SNR = (Bright mean - Dark mean) / sqrt((Bright mean / Bright width) + (Dark mean / Dark width))")
         text_lines.append(f"Widths: bright={bright_width}, dark={dark_width}")
         cs1_label = name1 or "CS1"
@@ -1261,6 +1256,7 @@ class CrossSectionViewer:
         # text_lines.append("SNR Factor")
         if snr_factor_method1 is not None and np.isfinite(snr_factor_method1):
             text_lines.append(f"Method 1 (max/min SNR): {snr_factor_method1:.3f}")
+            text_lines.append(f"Exposure Factor (SNR Ratio^2): {snr_factor_method1*snr_factor_method1:.3f}x")
         else:
             text_lines.append("Method 1 (max/min SNR): -")
         # if snr_factor_method2a is not None and np.isfinite(snr_factor_method2a):
@@ -1285,6 +1281,7 @@ class CrossSectionViewer:
             text_lines.append(
                 f"Method 2 sqrt((B1 + D1) / (B2 + D2)): {snr_factor_method2:.3f}"
             )
+            text_lines.append(f"Exposure Factor (SNR Ratio^2): {snr_factor_method2*snr_factor_method2:.3f}x")
         else:
             text_lines.append("Method 2 sqrt((B1 + D1) / (B2 + D2)): -")
         self.summary_text.configure(state="normal")
