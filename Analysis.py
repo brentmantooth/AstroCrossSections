@@ -26,14 +26,15 @@ class CrossSectionViewer:
         self.data_is_integer = False
         self.table_decimals = 3
         self.bg_index_var = tk.IntVar(value=0)
-        self.bg_width_var = tk.IntVar(value=15)
+        self.bg_width_var = tk.IntVar(value=20)
         self.bright_index_var = tk.IntVar(value=0)
-        self.bright_width_var = tk.IntVar(value=15)
+        self.bright_width_var = tk.IntVar(value=20)
         self.bg_value_text = tk.StringVar(value="X: -")
         self.bright_value_text = tk.StringVar(value="X: -")
         self.file_label_text = tk.StringVar(value="No data loaded")
         self.y_log_var = tk.BooleanVar(value=False)
         self.axis_log_override: dict[object, bool] = {}
+        self._slider_align_job: str | None = None
         self._pane_defaults_attempts = 0
         self._pane_defaults_set = False
         self._build_layout()
@@ -64,8 +65,12 @@ class CrossSectionViewer:
         self.top_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
         controls = ttk.Frame(top_section, padding=(6, 4))
         controls.grid(row=1, column=0, sticky="ew")
-        controls.columnconfigure(1, weight=1)
-        controls.columnconfigure(2, weight=0)
+        controls.columnconfigure(0, weight=0)
+        controls.columnconfigure(1, weight=0)
+        controls.columnconfigure(2, weight=1)
+        controls.columnconfigure(3, weight=0)
+        controls.columnconfigure(4, weight=0)
+        controls.columnconfigure(5, weight=0)
         col = 0
         if self.enable_csv:
             load_button = ttk.Button(controls, text="Load CSV", command=self.load_csv)
@@ -81,8 +86,24 @@ class CrossSectionViewer:
             command=self._on_log_toggle,
         )
         y_log_check.grid(row=0, column=col, sticky="e")
-        bg_label = ttk.Label(controls, text="Background")
-        bg_label.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        bg_header = ttk.Frame(controls)
+        bg_header.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(6, 0))
+        bg_header.columnconfigure(0, weight=1)
+        bg_label = ttk.Label(bg_header, text="Background")
+        bg_label.grid(row=0, column=0, sticky="w")
+        self.bg_value_label = ttk.Label(bg_header, textvariable=self.bg_value_text, width=12)
+        self.bg_value_label.grid(row=0, column=1, sticky="e", padx=(6, 0))
+        bg_width_label = ttk.Label(bg_header, text="Width")
+        bg_width_label.grid(row=0, column=2, sticky="e", padx=(8, 0))
+        self.bg_width_spin = ttk.Spinbox(
+            bg_header,
+            from_=1,
+            to=1,
+            textvariable=self.bg_width_var,
+            width=6,
+            command=self._on_width_change,
+        )
+        self.bg_width_spin.grid(row=0, column=3, sticky="e")
         self.bg_scale = tk.Scale(
             controls,
             from_=0,
@@ -93,22 +114,25 @@ class CrossSectionViewer:
             variable=self.bg_index_var,
             command=self._on_bg_slider,
         )
-        self.bg_scale.grid(row=1, column=1, sticky="ew", pady=(6, 0))
-        self.bg_value_label = ttk.Label(controls, textvariable=self.bg_value_text, width=12)
-        self.bg_value_label.grid(row=1, column=2, sticky="e", padx=(6, 0), pady=(6, 0))
-        bg_width_label = ttk.Label(controls, text="Width")
-        bg_width_label.grid(row=1, column=3, sticky="e", padx=(8, 0), pady=(6, 0))
-        self.bg_width_spin = ttk.Spinbox(
-            controls,
+        self.bg_scale.grid(row=2, column=0, columnspan=6, sticky="ew")
+        bright_header = ttk.Frame(controls)
+        bright_header.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(4, 0))
+        bright_header.columnconfigure(0, weight=1)
+        bright_label = ttk.Label(bright_header, text="Bright Region")
+        bright_label.grid(row=0, column=0, sticky="w")
+        self.bright_value_label = ttk.Label(bright_header, textvariable=self.bright_value_text, width=12)
+        self.bright_value_label.grid(row=0, column=1, sticky="e", padx=(6, 0))
+        bright_width_label = ttk.Label(bright_header, text="Width")
+        bright_width_label.grid(row=0, column=2, sticky="e", padx=(8, 0))
+        self.bright_width_spin = ttk.Spinbox(
+            bright_header,
             from_=1,
             to=1,
-            textvariable=self.bg_width_var,
+            textvariable=self.bright_width_var,
             width=6,
             command=self._on_width_change,
         )
-        self.bg_width_spin.grid(row=1, column=4, sticky="e", pady=(6, 0))
-        bright_label = ttk.Label(controls, text="Bright Region")
-        bright_label.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self.bright_width_spin.grid(row=0, column=3, sticky="e")
         self.bright_scale = tk.Scale(
             controls,
             from_=0,
@@ -119,20 +143,9 @@ class CrossSectionViewer:
             variable=self.bright_index_var,
             command=self._on_bright_slider,
         )
-        self.bright_scale.grid(row=2, column=1, sticky="ew", pady=(4, 0))
-        self.bright_value_label = ttk.Label(controls, textvariable=self.bright_value_text, width=12)
-        self.bright_value_label.grid(row=2, column=2, sticky="e", padx=(6, 0), pady=(4, 0))
-        bright_width_label = ttk.Label(controls, text="Width")
-        bright_width_label.grid(row=2, column=3, sticky="e", padx=(8, 0), pady=(4, 0))
-        self.bright_width_spin = ttk.Spinbox(
-            controls,
-            from_=1,
-            to=1,
-            textvariable=self.bright_width_var,
-            width=6,
-            command=self._on_width_change,
-        )
-        self.bright_width_spin.grid(row=2, column=4, sticky="e", pady=(4, 0))
+        self.bright_scale.grid(row=4, column=0, columnspan=6, sticky="ew")
+        self.top_canvas.get_tk_widget().bind("<Configure>", self._on_top_canvas_configure, add="+")
+        controls.bind("<Configure>", self._on_top_canvas_configure, add="+")
         self.bg_width_var.trace_add("write", self._on_width_trace)
         self.bright_width_var.trace_add("write", self._on_width_trace)
         bottom_section = ttk.Frame(self.main_pane)
@@ -163,7 +176,7 @@ class CrossSectionViewer:
         self.ratio_ax = self.ratio_fig.add_subplot(111)
         self.ratio_ax.set_title("Abs Ratio (BG Subtracted)")
         self.ratio_ax.set_xlabel("Bright Region")
-        self.ratio_ax.set_ylabel("Abs Ratio")
+        self.ratio_ax.set_ylabel("Bright Region Ratio")
         self.ratio_canvas = FigureCanvasTkAgg(self.ratio_fig, master=ratio_frame)
         self.ratio_canvas.draw()
         self.ratio_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", padx=(0, 6))
@@ -198,12 +211,12 @@ class CrossSectionViewer:
         self.left_pane.add(self.top_row_pane, weight=1)
         self.left_pane.add(self.bottom_row_pane, weight=1)
         table_frame = ttk.Frame(self.bottom_pane)
-        table_frame.rowconfigure(1, weight=1)
+        table_frame.rowconfigure(1, weight=0)
         table_frame.rowconfigure(4, weight=1)
         table_frame.columnconfigure(0, weight=1)
         table_label = ttk.Label(table_frame, text="Sample Values")
         table_label.grid(row=0, column=0, sticky="w", padx=4, pady=(0, 4))
-        self.summary_table = ttk.Treeview(table_frame, columns=(), show="headings", height=6)
+        self.summary_table = ttk.Treeview(table_frame, columns=(), show="headings", height=4)
         self.summary_table.grid(row=1, column=0, sticky="nsew")
         table_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.summary_table.yview)
         table_scroll.grid(row=1, column=1, sticky="ns")
@@ -231,6 +244,7 @@ class CrossSectionViewer:
         self.main_pane.add(top_section, weight=3)
         self.main_pane.add(bottom_section, weight=2)
         self.root.after(100, self._set_pane_defaults)
+        self.root.after(150, self._schedule_slider_alignment)
 
     def _set_controls_state(self, state: str) -> None:
         for widget in (
@@ -510,9 +524,32 @@ class CrossSectionViewer:
                 self.left_pane.sashpos(0, int(left_height * 0.5))
             if total_height > 0:
                 self.main_pane.sashpos(0, int(total_height * 0.33))
+            self._schedule_slider_alignment()
             self._pane_defaults_set = True
         except Exception:
             self._pane_defaults_set = True
+
+    def _on_top_canvas_configure(self, _event=None) -> None:
+        self._schedule_slider_alignment()
+
+    def _schedule_slider_alignment(self) -> None:
+        if self._slider_align_job is not None:
+            self.root.after_cancel(self._slider_align_job)
+        self._slider_align_job = self.root.after(20, self._align_sliders_to_top_axes)
+
+    def _align_sliders_to_top_axes(self) -> None:
+        self._slider_align_job = None
+        if not hasattr(self, "top_canvas") or not hasattr(self, "top_ax"):
+            return
+        canvas_widget = self.top_canvas.get_tk_widget()
+        canvas_width = canvas_widget.winfo_width()
+        if canvas_width <= 1:
+            return
+        axes_pos = self.top_ax.get_position()
+        left_pad = max(int(round(axes_pos.x0 * canvas_width)), 0)
+        right_pad = max(int(round((1.0 - axes_pos.x1) * canvas_width)), 0)
+        self.bg_scale.grid_configure(padx=(left_pad, right_pad))
+        self.bright_scale.grid_configure(padx=(left_pad, right_pad))
 
     def _on_bg_slider(self, value: str) -> None:
         if self.distance is None:
@@ -702,6 +739,32 @@ class CrossSectionViewer:
             end = count
         return start, end
 
+    def _ratio_from_region_stats(
+        self,
+        numerator: np.ndarray,
+        denominator: np.ndarray,
+    ) -> tuple[float, float]:
+        num = np.asarray(numerator, dtype=np.float64)
+        den = np.asarray(denominator, dtype=np.float64)
+        num = num[np.isfinite(num)]
+        den = den[np.isfinite(den)]
+        if num.size == 0 or den.size == 0:
+            return float("nan"), float("nan")
+        num_mean = float(np.mean(num))
+        den_mean = float(np.mean(den))
+        if not np.isfinite(num_mean) or not np.isfinite(den_mean) or den_mean == 0:
+            return float("nan"), float("nan")
+        num_std = float(np.std(num))
+        den_std = float(np.std(den))
+        ratio = abs(num_mean / den_mean)
+        ratio_unc = math.sqrt(
+            (num_std / abs(den_mean)) ** 2
+            + ((abs(num_mean) * den_std) / (den_mean ** 2)) ** 2
+        )
+        if not np.isfinite(ratio_unc):
+            ratio_unc = float("nan")
+        return ratio, ratio_unc
+
     def _configure_table(self) -> None:
         columns = ["Output", "Signal Type", "Mean", "Std Dev", "CV"]
         self.summary_table.configure(columns=columns, show="headings")
@@ -776,6 +839,7 @@ class CrossSectionViewer:
         self.top_ax.set_title("Cross Section")
         self.top_ax.set_xlabel("Distance (pixels)")
         self.top_ax.set_ylabel("Value")
+        self.top_ax.margins(x=0)
         self.top_ax.legend(loc="best", fontsize=9)
         self.top_ax.grid(True, alpha=0.3)
         if use_log_top and top_has_positive:
@@ -816,6 +880,7 @@ class CrossSectionViewer:
         self.bottom_ax.set_title("Background Subtracted")
         self.bottom_ax.set_xlabel("Distance (pixels)")
         self.bottom_ax.set_ylabel("Value - Background")
+        self.bottom_ax.margins(x=0)
         self.bottom_ax.legend(loc="best", fontsize=9)
         self.bottom_ax.grid(True, alpha=0.3)
         if use_log_bottom and bottom_has_positive:
@@ -829,20 +894,18 @@ class CrossSectionViewer:
         ratio_std = float("nan")
         ratio_x = 1.0
         if len(bg_sub_series) > 1:
-            baseline = bg_sub_series[0]
-            ratio = np.abs(
-                np.divide(
-                    bg_sub_series[1],
-                    baseline,
-                    out=np.full_like(bg_sub_series[1], np.nan),
-                    where=baseline != 0,
-                )
+            num_sample = (
+                bg_sub_series[1][bright_start:bright_end]
+                if bright_end > bright_start
+                else bg_sub_series[1]
             )
-            ratio_series.append(ratio)
-            ratio_sample = ratio[bright_start:bright_end] if bright_end > bright_start else ratio
-            if ratio_sample.size:
-                ratio_mean = float(np.nanmean(ratio_sample))
-                ratio_std = float(np.nanstd(ratio_sample))
+            den_sample = (
+                bg_sub_series[0][bright_start:bright_end]
+                if bright_end > bright_start
+                else bg_sub_series[0]
+            )
+            ratio_mean, ratio_std = self._ratio_from_region_stats(num_sample, den_sample)
+            ratio_series.append(np.array([ratio_mean], dtype=np.float64))
             ratio_has_positive = np.isfinite(ratio_mean) and ratio_mean > 0
             if np.isfinite(ratio_mean):
                 yerr = ratio_std if np.isfinite(ratio_std) else 0.0
@@ -871,7 +934,7 @@ class CrossSectionViewer:
                     )
         self.ratio_ax.set_title("")
         self.ratio_ax.set_xlabel("Bright Region")
-        self.ratio_ax.set_ylabel("Abs Ratio")
+        self.ratio_ax.set_ylabel("Bright Region Ratio")
         self.ratio_ax.axhline(1.0, color="gray", linestyle=":", linewidth=1.2)
         self.ratio_ax.set_xlim(0.0, 2.0)
         if np.isfinite(ratio_mean):
@@ -902,6 +965,7 @@ class CrossSectionViewer:
         self.diff_orig_ax.set_title("")
         self.diff_orig_ax.set_xlabel("Distance (pixels)")
         self.diff_orig_ax.set_ylabel("Value Difference")
+        self.diff_orig_ax.margins(x=0)
         if len(self.series_values) > 1:
             self.diff_orig_ax.legend(loc="best", fontsize=9)
         self.diff_orig_ax.grid(True, alpha=0.3)
@@ -930,6 +994,7 @@ class CrossSectionViewer:
         self.diff_bg_ax.set_title("")
         self.diff_bg_ax.set_xlabel("Distance (pixels)")
         self.diff_bg_ax.set_ylabel("Value Difference")
+        self.diff_bg_ax.margins(x=0)
         if len(bg_sub_series) > 1:
             self.diff_bg_ax.legend(loc="best", fontsize=9)
         self.diff_bg_ax.grid(True, alpha=0.3)
@@ -992,13 +1057,13 @@ class CrossSectionViewer:
         cs2 = self.series_values[1] if len(self.series_values) > 1 else None
         cs1_bg_mean, cs1_bg_std = mean_std(cs1, bg_start, bg_end)
         cs1_br_mean, cs1_br_std = mean_std(cs1, bright_start, bright_end)
-        rows.append((f"{name1} signal", "Background", cs1_bg_mean, cs1_bg_std))
-        rows.append((f"{name1} signal", "Bright", cs1_br_mean, cs1_br_std))
+        rows.append((f"{name1}", "Background", cs1_bg_mean, cs1_bg_std))
+        rows.append((f"{name1}", "Bright", cs1_br_mean, cs1_br_std))
         if cs2 is not None and name2 is not None:
             cs2_bg_mean, cs2_bg_std = mean_std(cs2, bg_start, bg_end)
             cs2_br_mean, cs2_br_std = mean_std(cs2, bright_start, bright_end)
-            rows.append((f"{name2} signal", "Background", cs2_bg_mean, cs2_bg_std))
-            rows.append((f"{name2} signal", "Bright", cs2_br_mean, cs2_br_std))
+            rows.append((f"{name2}", "Background", cs2_bg_mean, cs2_bg_std))
+            rows.append((f"{name2}", "Bright", cs2_br_mean, cs2_br_std))
         else:
             cs2_bg_mean = cs2_bg_std = cs2_br_mean = cs2_br_std = float("nan")
         bright_width = max(bright_end - bright_start, 1)
@@ -1144,18 +1209,20 @@ class CrossSectionViewer:
         else:
             cs2_bgsub_br_mean = cs2_bgsub_br_std = float("nan")
         if cs2 is not None:
-            ratio_values = np.abs(
-                np.divide(
-                    cs1_bgsub,
-                    cs2_bgsub,
-                    out=np.full_like(cs1_bgsub, np.nan),
-                    where=cs2_bgsub != 0,
-                )
+            ratio_num_sample = (
+                cs1_bgsub[bright_start:bright_end]
+                if bright_end > bright_start
+                else cs1_bgsub
             )
-            if np.mean(ratio_values) < 1.0:
-                ratio_values = 1/ratio_values
-                
-            ratio_mean, ratio_std = mean_std(ratio_values, bright_start, bright_end)
+            ratio_den_sample = (
+                cs2_bgsub[bright_start:bright_end]
+                if bright_end > bright_start
+                else cs2_bgsub
+            )
+            ratio_mean, ratio_std = self._ratio_from_region_stats(
+                ratio_num_sample,
+                ratio_den_sample,
+            )
             rows.append(("Abs Ratio (cs1/cs2)", "Bright", ratio_mean, ratio_std))
         else:
             rows.append(("Abs Ratio (cs1/cs2)", "Bright", float("nan"), float("nan")))
@@ -1178,10 +1245,8 @@ class CrossSectionViewer:
             diff_bgsub_bg_std = float(np.nanstd(diff_bgsub_bg)) if diff_bgsub_bg.size else float("nan")
             diff_bgsub_br_mean = float(np.nanmean(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
             diff_bgsub_br_std = float(np.nanstd(diff_bgsub_br)) if diff_bgsub_br.size else float("nan")
-            rows.append(("BG-sub diff", "Background", diff_bgsub_bg_mean, diff_bgsub_bg_std))
             rows.append(("BG-sub diff", "Bright", diff_bgsub_br_mean, diff_bgsub_br_std))
         else:
-            rows.append(("BG-sub diff", "Background", float("nan"), float("nan")))
             rows.append(("BG-sub diff", "Bright", float("nan"), float("nan")))
 
         def fmt_snr(value: float) -> str:
@@ -1189,11 +1254,6 @@ class CrossSectionViewer:
                 return "-"
             return f"{value:.3f}"
         text_lines = ["Analysis"]
-        text_lines.append("Assumptions:")
-        text_lines.append("- Same camera, settings, and integration time.")
-        text_lines.append("- Only difference is the filter.")
-        text_lines.append("- Signal is not read-noise dominated.")
-        text_lines.append("- If images are stacked, SNR may be slightly overestimated because sampled pixels may have correlation.")
         for label, signal_type, mean_val, std_val in rows:
             if mean_val is None or not np.isfinite(mean_val) or mean_val == 0:
                 cv_val = float("nan")
@@ -1229,8 +1289,6 @@ class CrossSectionViewer:
                     f"Attenuation (BG-sub bright, CS2 vs CS1) approx {attenuation_pct:.2f}%"
                 )
         text_lines.append("")
-        text_lines.append("SNR (bright vs dark)")
-        text_lines.append("Method 1 assumes Var(B) ~ B, Var(D) ~ D.")
         text_lines.append("Method 1 SNR = (Bright mean - Dark mean) / sqrt((Bright mean / Bright width) + (Dark mean / Dark width))")
         text_lines.append(f"Widths: bright={bright_width}, dark={dark_width}")
         cs1_label = name1 or "CS1"
@@ -1245,36 +1303,11 @@ class CrossSectionViewer:
         else:
             text_lines.append("CS2: -")
 
-        # text_lines.append("")
-        # text_lines.append("Method 2 uses Var(B)=Std(B)^2/Bright Width, Var(D)=Std(D)^2/Dark Width.")
-        # text_lines.append("Method 2 SNR = (Bright mean - Dark mean) / sqrt((Std(B)^2 / Bright width) + (Std(D)^2 / Dark width))")
-        # text_lines.append(
-        #     f"{cs1_label}: SNR={fmt_snr(snr_cs1_std)}"
-        # )
-        # if cs2 is not None:
-        #     text_lines.append(
-        #         f"{cs2_label}: SNR={fmt_snr(snr_cs2_std)}"
-        #     )
-        # else:
-        #     text_lines.append("CS2: -")
-        # text_lines.append("")
-        # text_lines.append("SNR Factor")
         if snr_factor_method1 is not None and np.isfinite(snr_factor_method1):
             text_lines.append(f"Method 1 (max/min SNR): {snr_factor_method1:.3f}")
+            text_lines.append(f"Exposure Factor (SNR Ratio^2): {snr_factor_method1*snr_factor_method1:.3f}x")
         else:
             text_lines.append("Method 1 (max/min SNR): -")
-        # if snr_factor_method2a is not None and np.isfinite(snr_factor_method2a):
-        #     text_lines.append(
-        #         f"Method 3A: sqrt((B1 + D1) / (B2 + D2)) = {snr_factor_method2a:.3f}"
-        #     )
-        # else:
-        #     text_lines.append("Method 3A: sqrt((B1 + D1) / (B2 + D2)) = -")
-        # if snr_factor_method2b is not None and np.isfinite(snr_factor_method2b):
-        #     text_lines.append(
-        #         f"Method 3B: sqrt((B2 + D2) / (B1 + D1)) = {snr_factor_method2b:.3f}"
-        #     )
-        # else:
-        #     text_lines.append("Method 3B: sqrt((B2 + D2) / (B1 + D1)) = -")
         if (
             snr_factor_method2a is not None
             and np.isfinite(snr_factor_method2a)
@@ -1285,8 +1318,15 @@ class CrossSectionViewer:
             text_lines.append(
                 f"Method 2 sqrt((B1 + D1) / (B2 + D2)): {snr_factor_method2:.3f}"
             )
+            text_lines.append(f"Exposure Factor (SNR Ratio^2): {snr_factor_method2*snr_factor_method2:.3f}x")
         else:
             text_lines.append("Method 2 sqrt((B1 + D1) / (B2 + D2)): -")
+        text_lines.append("")
+        text_lines.append("Assumptions:")
+        text_lines.append("- Same camera, settings, and integration time.")
+        text_lines.append("- Only difference is the filter.")
+        text_lines.append("- Signal is not read-noise dominated.")
+ 
         self.summary_text.configure(state="normal")
         self.summary_text.delete("1.0", "end")
         self.summary_text.insert("end", "\n".join(text_lines))
