@@ -2,7 +2,7 @@
 
 AstroCrossSections is a Tkinter desktop tool for comparing two astrophotography images by sampling line cross sections, plotting the results, and running follow-up signal analysis.
 
-See the demo video: https://youtu.be/OwB1C-wKpCU
+See the demo video: https://www.youtube.com/watch?v=D5EoWmsv2n4
 
 ![AstroCrossSections screenshot](AstroCrossScreen.png)
 ![AstroCrossSections Analysis screenshot](CrossSectionAnalyze.png)
