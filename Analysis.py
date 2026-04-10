@@ -1136,6 +1136,14 @@ class CrossSectionViewer:
             if cs2 is not None
             else float("nan")
         )
+
+        if(snr_cs1 > snr_cs2):
+            lowerSNRImageName = name2
+            higherSNRImageName = name1
+        else:
+            lowerSNRImageName = name1
+            higherSNRImageName = name2
+
         snr_cs1_std = snr_value_from_std(
             cs1_br_mean,
             cs1_bg_mean,
@@ -1276,17 +1284,18 @@ class CrossSectionViewer:
             text_lines.append(
                 f"Welch t-test (normal approx): t={t_stat:.3f}, df={df:.1f}, p~{p_val:.3g}, n1={n1}, n2={n2}"
             )
+            text_lines.append("")
             if p_val >= 0.05:
                 text_lines.append(
-                    "Result: Bright regions are statistically similar; signal attenuation is unlikely."
+                    "Result: Bright regions are statistically similar."
                 )
             else:
                 text_lines.append(
-                    "Result: Bright regions are statistically different; filters may have induced some signal attenuation."
+                    "Result: Bright regions are statistically different."
                 )
             if attenuation_pct is not None and np.isfinite(attenuation_pct):
                 text_lines.append(
-                    f"Attenuation (BG-sub bright, CS2 vs CS1) approx {attenuation_pct:.2f}%"
+                    f"Attenuation Estimate: {attenuation_pct:.2f}%"
                 )
         text_lines.append("")
         text_lines.append("Method 1 SNR = (Bright mean - Dark mean) / sqrt((Bright mean / Bright width) + (Dark mean / Dark width))")
@@ -1306,6 +1315,8 @@ class CrossSectionViewer:
         if snr_factor_method1 is not None and np.isfinite(snr_factor_method1):
             text_lines.append(f"Method 1 (max/min SNR): {snr_factor_method1:.3f}")
             text_lines.append(f"Exposure Factor (SNR Ratio^2): {snr_factor_method1*snr_factor_method1:.3f}x")
+            text_lines.append(f"Image {lowerSNRImageName} requires {snr_factor_method1*snr_factor_method1:.3f}x more exposure time than image {higherSNRImageName} to achieve similar SNR")
+            text_lines.append(" ")
         else:
             text_lines.append("Method 1 (max/min SNR): -")
         if (
